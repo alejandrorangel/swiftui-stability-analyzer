@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.4.0`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.5.0`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.4.0"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.5.0"),
 ],
 targets: [
     .target(
@@ -110,6 +110,29 @@ In Xcode, only `warning` findings and views that can't skip are reported; `info`
 | `foreach-id-self` | info | `id: \.self` identifies rows by value |
 | `observable-object` | info | ObservableObject invalidates on any `@Published` change |
 
+### Measure at runtime: `trace`
+
+`trace` records the app with Instruments' View Body instrument (no code changes), counts `body` runs and time per view, and with `--sources` compares each view with the static analysis:
+
+```sh
+swiftui-stability trace --app path/to/MyApp.app --device "iPhone 17" --sources MyApp/   # launch and record 10 s
+swiftui-stability trace --attach MyApp --device "iPhone 17" --time-limit 30s --sources MyApp/   # use the app meanwhile
+swiftui-stability trace --trace recording.trace --sources MyApp/   # a recording made in Instruments
+```
+
+```
+Runs  Total ms  View                                Verdict
+  21      0.68  AnyViewInput                        confirmed  — skippable: no (content)
+  21      0.58  ClosureCapturingParentInput         confirmed  — ContentView passes a closure capturing `self` (line 40)
+  21      0.61  ChangingInput                       unexplained  — a changing input: value
+   2      0.64  ArrayInput                          quiet
+```
+
+- **confirmed:** predicted to re-run with its parent, and it's hot (`--hot`, default 10 runs).
+- **unexplained:** hot without a predicted cause. The hint lists what it owns, observes or receives; confirm with `let _ = Self._printChanges()`.
+- **not-rerunning:** predicted, but cold: the parent rarely updates (nothing to fix), or a wrong prediction worth reporting.
+- `--json` for agents. Works on simulators and devices; the per-view counts match the views' own counters exactly (checked on StabilityLab). Release builds give the most realistic times.
+
 ### Suppressing a finding
 
 When a finding is intended, say so next to the code with `// swiftui-stability:ignore <rule> — reason`:
@@ -134,7 +157,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.4.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.5.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```

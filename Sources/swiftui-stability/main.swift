@@ -6,8 +6,8 @@ struct SwiftUIStability: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swiftui-stability",
         abstract: "Reports which SwiftUI views can skip `body` when their parent re-renders, and why.",
-        version: "0.4.0",
-        subcommands: [Analyze.self, Dump.self, Check.self],
+        version: "0.5.0",
+        subcommands: [Analyze.self, Dump.self, Check.self, Trace.self],
         defaultSubcommand: Analyze.self
     )
 }
@@ -142,6 +142,79 @@ struct Check: ParsableCommand {
                   : "\n\(failing.count) failing change(s). If intended, run `swiftui-stability dump` and commit \(baseline).")
         }
         if !failing.isEmpty { throw ExitCode(1) }
+    }
+}
+
+struct Trace: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Measure body runs per view with Instruments, and compare them with the static analysis.",
+        discussion: """
+        Records with the "View Body" instrument (no code changes to the app), then lists each app view's body \
+        runs and time, hottest first. With --sources, each view is compared with the analyzer's prediction: \
+        confirmed (predicted to re-run, and hot), unexplained (hot, no predicted cause), not-rerunning \
+        (predicted, but cold), quiet.
+
+          swiftui-stability trace --app MyApp.app --device <udid> --sources MyApp/
+          swiftui-stability trace --attach MyApp --device <udid> --time-limit 20s   # interact meanwhile
+          swiftui-stability trace --trace recording.trace --sources MyApp/
+        """
+    )
+
+    @Option(help: "Launch this .app for the recording (built for the --device).")
+    var app: String?
+
+    @Option(help: "Attach to a running app by process name or PID.")
+    var attach: String?
+
+    @Option(name: .customLong("trace"), help: "Read an existing .trace instead of recording.")
+    var existing: String?
+
+    @Option(help: "Simulator or device (name or UDID) to record on.")
+    var device: String?
+
+    @Option(help: "How long to record, e.g. 10s or 1m.")
+    var timeLimit = "10s"
+
+    @Option(name: [.short, .long], help: "Keep the recording at this path (default: a temporary file).")
+    var output: String?
+
+    @Option(name: .customLong("sources"), help: "Analyze these sources and compare (repeatable).")
+    var sources: [String] = []
+
+    @Option(help: "Body runs that make a view hot.")
+    var hot = 10
+
+    @Flag(help: "Print JSON.")
+    var json = false
+
+    func validate() throws {
+        let given = [app, attach, existing].compactMap { $0 }.count
+        guard given == 1 else { throw ValidationError("Pass exactly one of --app, --attach or --trace.") }
+    }
+
+    func run() throws {
+        let tracePath: String
+        if let existing {
+            tracePath = existing
+        } else {
+            tracePath = output ?? FileManager.default.temporaryDirectory
+                .appending(path: "swiftui-stability-\(UUID().uuidString).trace").path()
+            let target: Xctrace.Target = if let app { .launch(app: app) } else { .attach(attach!) }
+            if !json { print("Recording \(timeLimit) with the \(BodyTrace.instrument) instrument…") }
+            try Xctrace.record(target, device: device, timeLimit: timeLimit, output: tracePath)
+        }
+        let trace = try Xctrace.bodyTrace(from: tracePath)
+        let reports = sources.isEmpty ? [] : Analyzer.analyze(try SourceFiles.load(sources))
+        let check = RealityCheck(trace: trace, reports: reports, hotThreshold: hot)
+
+        if json {
+            struct Result: Encodable { var trace: String; var duration: Double?; var rows: [RealityCheck.Row] }
+            print(try JSON.encode(Result(trace: tracePath, duration: trace.duration, rows: check.rows)))
+        } else {
+            print(check.render(duration: trace.duration))
+            if sources.isEmpty { print("Pass --sources <dir> to compare with the static analysis.") }
+            print("Trace: \(tracePath)")
+        }
     }
 }
 

@@ -20,6 +20,14 @@ In Xcode, the same analysis runs as the **SwiftUIStabilityPlugin** build tool pl
 2. **Before editing a view, note its verdict; after editing, run it again** and make sure nothing got worse (`skippable: yes` → `no`, `stable` → `unstable`).
 3. **If the project has a baseline** (`stability/baseline.stability`), run `swiftui-stability check <AppSourcesDir>`. Exit status 1 means something changed: fix regressions; if a change is intended, run `swiftui-stability dump <AppSourcesDir>` and commit the updated baseline with the code.
 
+## Measuring at runtime
+
+To find which views actually re-run, and why, without editing the app:
+
+`swiftui-stability trace --app <path.app> --device <sim or device> --sources <AppSourcesDir> --json`
+
+(`ios describe --scheme S` gives the .app path; `--attach <AppName> --time-limit 30s` records a running app while you drive it, e.g. with `ios input`.) Each view gets its body run count and time, plus a verdict: `confirmed` (predicted and hot: fix it if it's expensive), `unexplained` (hot, no predicted cause: the `hint` lists its state, observed objects and inputs), `not-rerunning`, `quiet`. Prefer this over adding temporary counters.
+
 ## Reading the output
 
 ```
