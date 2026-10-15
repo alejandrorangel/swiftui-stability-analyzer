@@ -4,7 +4,15 @@ How SwiftUI actually decides whether to re-run a child's `body`, measured with [
 
 **Method.** A parent view re-renders 20 times (it reads a `@State` counter), rebuilding each child with an *equal* input every time. Each child counts its own `body` runs. About 1 run means SwiftUI compared the inputs and skipped; about 21 means it re-ran on every parent update. Three controls receive a changing input and must reach 21.
 
-**Environment.** iPhone 17 simulator, iOS 27.0 (24A434), Xcode 27.0, Debug build, 2026-10-15. Six runs gave the same verdicts; one launch added a few unrelated runs (up to 8) to some views, which is why only "once per parent update" counts as re-running. Not yet measured: a physical device, older iOS versions, Release builds.
+**Environment.** iPhone 17 simulator, iOS 27.0 (24A434), Xcode 27.0, Debug build, 2026-10-15. Six runs gave the same verdicts; one launch added a few unrelated runs (up to 8) to some views, which is why only "once per parent update" counts as re-running. The table below is from iOS 27.0.
+
+| Environment | Agree |
+|---|---|
+| iPhone 17 simulator, iOS 27.0 (24A434), Debug | 40/40 (6 runs) |
+| iPhone 17 simulator, iOS 26.5 (23F77), Debug | 40/40 |
+| Physical device | not yet measured |
+| Release build | not yet measured |
+| iOS 17 / 18 | not yet measured (no runtime installed) |
 
 ## What SwiftUI does
 
