@@ -15,7 +15,7 @@ There are two ways to use the tool:
 1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.7.1`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
-4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
+4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-captures-self]`. The build log (Report navigator → the build → "SwiftUI stability: <target>") has a summary: totals, the views that can't skip with their unstable inputs, warnings by rule, and the path of the full JSON report.
 
 The first build compiles the analyzer and swift-syntax for your Mac: about 12 s for a Debug build and about 2 minutes for a Release build or Archive (measured on an Apple silicon Mac); later builds reuse it. After that the analyzer runs on every build: parsing only, nothing is compiled into your app. `xcodebuild` on CI needs `-skipPackagePluginValidation`, the command-line version of Trust & Enable.
 
@@ -114,7 +114,7 @@ The rules are measured, not guessed: [Validation/RESULTS.md](Validation/RESULTS.
 
 What's analyzed: structs conforming to `View`, `ViewModifier` (`body(content:)`), and `UIViewRepresentable` / `UIViewControllerRepresentable` / their AppKit equivalents (SwiftUI compares their stored properties before calling `update…`). All `#if` branches are read, since the analyzer doesn't know your build settings; two declarations with the same name in different branches are both reported (the second as `Name #2` in the baseline).
 
-In Xcode, only `warning` findings and views that can't skip are reported; `info` findings appear only in `analyze` output. Each plugin run also writes the full JSON report (`<Target>.stability.json`) to the plugin's output directory in DerivedData (`…/BuildToolPluginIntermediates/…/SwiftUIStabilityPlugin/`).
+In Xcode, only `warning` findings and views that can't skip are reported (Xcode drops info-level notes from plugins); `info` findings appear only in `analyze` output, and totals in the build-log summary. Each plugin run also writes the full JSON report (`<Target>.stability.json`) to the plugin's output directory in DerivedData (`…/BuildToolPluginIntermediates/…/SwiftUIStabilityPlugin/`).
 
 ## Rules
 
