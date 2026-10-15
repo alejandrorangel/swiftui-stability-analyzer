@@ -11,6 +11,19 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD=$(mktemp -d)
 DEST="$HOME/Applications"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# macOS registers every built app, so the build copy would show up as a second extension in System Settings:
+# unregister it and delete the build folder, whatever happens.
+cleanup() {
+    BUILT="$BUILD/Build/Products/Release/SwiftUI Stability.app"
+    if [ -d "$BUILT" ]; then
+        pluginkit -r "$BUILT/Contents/PlugIns/SwiftUIStabilityExtension.appex" 2>/dev/null || true
+        "$LSREGISTER" -u "$BUILT" 2>/dev/null || true
+    fi
+    rm -rf "$BUILD"
+}
+trap cleanup EXIT
 
 echo "Building the extension (Release)…"
 xcodebuild -project "$ROOT/EditorExtension/SwiftUIStability.xcodeproj" -scheme SwiftUIStability \
