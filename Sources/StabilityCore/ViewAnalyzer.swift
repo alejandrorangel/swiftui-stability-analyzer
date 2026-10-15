@@ -231,7 +231,12 @@ private final class BodyScanner: SyntaxVisitor {
     }
 }
 
-/// `// swiftui-stability:ignore [rule, rule…]` silences findings on its own line and on the line after it.
+/// `// swiftui-stability:ignore [rule, rule…] — reason` silences findings.
+///
+/// - On a comment-only line, it applies to the first code line after its contiguous `//` block (so the reason can
+///   wrap over several lines), and to any attribute-only lines that start that declaration.
+/// - At the end of a code line, it applies to that line.
+///
 /// Without rules it silences all of them; `stability` silences the "can't skip" warning on a declaration.
 struct Suppressions {
     private var rulesByLine: [Int: Set<String>] = [:]
@@ -239,16 +244,36 @@ struct Suppressions {
 
     init(source: String) {
         guard source.contains("swiftui-stability:ignore") else { return }
-        for (index, line) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        for (index, line) in lines.enumerated() {
             guard let comment = line.range(of: "//"),
                   let directive = line[comment.upperBound...].range(of: "swiftui-stability:ignore") else { continue }
             let rules = line[directive.upperBound...]
                 .split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
-                .prefix { !$0.hasPrefix("-") && !$0.hasPrefix("—") }
+                .prefix { !$0.hasPrefix("-") && !$0.hasPrefix("—") && !$0.hasPrefix("(") }
             let set = rules.isEmpty ? [Self.all] : Set(rules)
-            rulesByLine[index + 1, default: []].formUnion(set)
-            rulesByLine[index + 2, default: []].formUnion(set)
+            // Line numbers are 1-based.
+            guard line.hasPrefix("//") else {
+                rulesByLine[index + 1, default: []].formUnion(set)
+                continue
+            }
+            var target = index + 1
+            while target < lines.count, lines[target].hasPrefix("//") { target += 1 }
+            // A blank line ends the comment block: the directive isn't attached to any code.
+            guard target < lines.count, !lines[target].isEmpty else { continue }
+            rulesByLine[target + 1, default: []].formUnion(set)
+            // `@MainActor` on its own line before `@StateObject var x`: the finding is on the declaration line.
+            while target + 1 < lines.count, isAttributeOnly(lines[target]) {
+                target += 1
+                rulesByLine[target + 1, default: []].formUnion(set)
+            }
         }
+    }
+
+    private func isAttributeOnly(_ line: String) -> Bool {
+        line.hasPrefix("@") && !line.contains(" var ") && !line.contains(" let ")
+            && !line.contains("struct ") && !line.contains("class ") && !line.contains("func ")
     }
 
     func ignores(_ rule: String, at line: Int) -> Bool {

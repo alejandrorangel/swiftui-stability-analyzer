@@ -48,7 +48,7 @@ ProfileView  skippable: no  Sources/ProfileView.swift:22
 | `observable-object` (info) | Consider migrating the ObservableObject to `@Observable` for per-property invalidation. |
 | `any-view` (info) | Use `@ViewBuilder`, `some View`, or a generic `Content: View`. |
 
-**Intended findings:** add `// swiftui-stability:ignore <rule> — <why>` on the line before (or at the end of) the flagged line, instead of contorting the code. `// swiftui-stability:ignore stability` on a type's declaration silences its "can't skip" warning. Don't suppress without a reason in the comment.
+**Intended findings:** add `// swiftui-stability:ignore <rule> — <why>` in the comment block directly above the flagged declaration (any line of the block; the reason may wrap) or at the end of its line, instead of contorting the code. No blank line between the comment and the code. `// swiftui-stability:ignore stability` on a type's declaration silences its "can't skip" warning. Don't suppress without a reason in the comment.
 
 Stability is a means, not a goal: prioritize views in lists, views under frequently changing state, and expensive bodies. Skippability is a static prediction; confirm suspected hot spots at runtime with `let _ = Self._logChanges()` in `body` (unified log, subsystem `com.apple.SwiftUI`) or the SwiftUI template in Instruments.
 

@@ -259,10 +259,18 @@ private final class DeclarationCollector: SyntaxVisitor {
     override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
     override func visit(_ node: ClosureExprSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
 
+    private static let nonWrapperAttributes: Set<String> = [
+        "MainActor", "Sendable", "IBOutlet", "IBInspectable", "GKInspectable", "NSManaged", "NSCopying",
+    ]
+
     private func storedProperties(of variable: VariableDeclSyntax) -> [StoredProperty] {
         let modifiers = Set(variable.modifiers.map(\.name.text))
         guard modifiers.isDisjoint(with: ["static", "class"]) else { return [] }
-        let wrapperAttribute = variable.attributes.compactMap { $0.as(AttributeSyntax.self) }.first
+        // The property wrapper, skipping attributes that aren't one (`@MainActor`, `@available`, `@objc`…).
+        let wrapperAttribute = variable.attributes.compactMap { $0.as(AttributeSyntax.self) }.first { attribute in
+            let name = stripModule(attribute.attributeName.trimmedDescription)
+            return name.first?.isUppercase == true && !Self.nonWrapperAttributes.contains(name)
+        }
         let wrapper = wrapperAttribute.map { stripModule($0.attributeName.trimmedDescription) }
 
         return variable.bindings.compactMap { binding -> StoredProperty? in

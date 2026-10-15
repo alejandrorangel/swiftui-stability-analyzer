@@ -168,3 +168,16 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
     """)
     #expect(views["V"]?.skippable == .yes)
 }
+
+@Test func attributesThatArentWrappersAreIgnored() {
+    let views = analyze("""
+    struct V: View {
+        @MainActor let action: () -> Void
+        @available(iOS 18, *) let title: String
+        @State @MainActor private var on = false
+        var body: some View { EmptyView() }
+    }
+    """)
+    #expect(views["V"]?.properties.map(\.wrapper) == [nil, nil, "State"])
+    #expect(property(views["V"], "action")?.stability == .unstable)
+}

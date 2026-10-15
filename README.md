@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.3.1`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.3.2`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.3.1"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.3.2"),
 ],
 targets: [
     .target(
@@ -102,14 +102,18 @@ In Xcode, only `warning` findings and views that can't skip are reported; `info`
 
 ### Suppressing a finding
 
-When a finding is intended, say so next to the code. `// swiftui-stability:ignore <rule>` applies to its own line and the line after it:
+When a finding is intended, say so next to the code with `// swiftui-stability:ignore <rule> — reason`:
 
 ```swift
-// swiftui-stability:ignore state-plain-class — holds a weak scroll view; its changes must not re-render
+// swiftui-stability:ignore state-plain-class — holds a weak scroll view and the last handled row;
+// its changes must not re-render.
 @State private var tracker = ScrollTracker()
 
 let onTap: () -> Void  // swiftui-stability:ignore closure-property
 ```
+
+- **In a comment above the code**, it can be on any line of the comment block (so the reason can wrap) and applies to the first code line after the block, including attribute lines such as `@MainActor`. A blank line between the comment and the code detaches it.
+- **At the end of a line**, it applies to that line.
 
 List several rules separated by commas, or leave out the rule to silence every finding on that line. `// swiftui-stability:ignore stability` on a type's declaration silences its "can't skip" warning in Xcode. The baseline still records the type, so `check` still catches it getting worse. Suppressed findings are listed in `analyze` output and in `--json` (`suppressed`).
 
@@ -120,7 +124,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.3.1 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.3.2 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```

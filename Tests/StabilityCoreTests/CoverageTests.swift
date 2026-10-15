@@ -270,3 +270,55 @@ private func frequentUpdates(_ model: String) -> [Finding] {
     """)
     #expect(reports.first?.findings.isEmpty == true)
 }
+
+// Suppression placement.
+
+private func closureFindingSuppressed(_ declaration: String) -> Bool {
+    let report = analyze("struct Screen: View {\n\(declaration)\n    var body: some View { EmptyView() }\n}").first
+    return report?.findings.isEmpty == true && report?.suppressed.map(\.rule) == ["closure-property"]
+}
+
+@Test func directiveAtTheTopOfAWrappedCommentApplies() {
+    #expect(closureFindingSuppressed("""
+        // swiftui-stability:ignore closure-property — the parent passes a stable method reference, and the
+        // view is cheap: measured ~0.1 ms.
+        let onTap: () -> Void
+    """))
+}
+
+@Test func directiveInTheMiddleOfACommentBlockApplies() {
+    #expect(closureFindingSuppressed("""
+        /// The action to run.
+        // swiftui-stability:ignore closure-property — intended
+        /// Called on the main actor.
+        let onTap: () -> Void
+    """))
+}
+
+@Test func directiveAppliesThroughAttributeLines() {
+    #expect(closureFindingSuppressed("""
+        // swiftui-stability:ignore closure-property
+        @MainActor
+        let onTap: () -> Void
+    """))
+}
+
+@Test func blankLineDetachesTheDirective() {
+    #expect(!closureFindingSuppressed("""
+        // swiftui-stability:ignore closure-property
+
+        let onTap: () -> Void
+    """))
+}
+
+@Test func trailingDirectiveAppliesOnlyToItsLine() {
+    let report = analyze("""
+    struct Screen: View {
+        let a: () -> Void // swiftui-stability:ignore closure-property
+        let b: () -> Void
+        var body: some View { EmptyView() }
+    }
+    """).first
+    #expect(report?.suppressed.map(\.line) == [2])
+    #expect(report?.findings.map(\.line) == [3])
+}
