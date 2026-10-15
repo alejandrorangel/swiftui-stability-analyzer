@@ -35,6 +35,33 @@ public enum TextReport {
 /// `path:line:column: warning: message`, which Xcode shows inline when a build phase or build tool plugin
 /// prints it (the same channel SwiftLint uses).
 public enum XcodeDiagnostics {
+    /// A readable summary for the build log (Xcode's Report navigator). Plain lines, not `file:line:` ones, so
+    /// Xcode keeps them out of the Issue navigator.
+    public static func summary(_ reports: [ViewReport], reportPath: String?) -> String {
+        let count = { (s: Skippability) in reports.filter { $0.skippable == s }.count }
+        let warnings = reports.flatMap(\.findings).filter { $0.severity == .warning }
+        var lines = [
+            "SwiftUI stability: \(reports.count) views: \(count(.yes)) skippable, \(count(.depends)) depend on their callers, \(count(.no)) can't skip. \(warnings.count + count(.no)) warning\(warnings.count + count(.no) == 1 ? "" : "s") in the Issue navigator.",
+        ]
+        let blocked = reports.filter { $0.skippable == .no && !$0.stabilityWarningIgnored }
+        if !blocked.isEmpty {
+            lines.append("Can't skip body (unstable inputs):")
+            for report in blocked {
+                let inputs = report.comparedProperties.filter { $0.stability == .unstable }
+                    .map { "\($0.name): \($0.type)" }.joined(separator: ", ")
+                lines.append("  \(report.name)  \(inputs)  (\((report.file as NSString).lastPathComponent):\(report.line))")
+            }
+        }
+        var byRule: [String: Int] = [:]
+        for finding in warnings { byRule[finding.rule, default: 0] += 1 }
+        if !byRule.isEmpty {
+            lines.append("Warnings by rule: " + byRule.sorted { ($1.value, $0.key) < ($0.value, $1.key) }
+                .map { "\($0.key) \($0.value)" }.joined(separator: ", "))
+        }
+        if let reportPath { lines.append("Full report (JSON): \(reportPath)") }
+        return lines.joined(separator: "\n")
+    }
+
     public static func render(_ reports: [ViewReport], includeInfo: Bool = false) -> String {
         let cwd = FileManager.default.currentDirectoryPath
         var lines: [String] = []

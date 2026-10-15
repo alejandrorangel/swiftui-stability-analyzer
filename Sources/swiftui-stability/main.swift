@@ -6,7 +6,7 @@ struct SwiftUIStability: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swiftui-stability",
         abstract: "Reports which SwiftUI views can skip `body` when their parent re-renders, and why.",
-        version: "0.7.0",
+        version: "0.7.1",
         subcommands: [Analyze.self, Dump.self, Check.self, Trace.self],
         defaultSubcommand: Analyze.self
     )
@@ -74,7 +74,9 @@ struct Analyze: ParsableCommand {
         switch jsonFlag ? .json : format {
         case .text: print(TextReport.render(reports, unstableOnly: unstableOnly))
         case .json: print(try JSON.encode(reports))
-        case .xcode: print(XcodeDiagnostics.render(reports))
+        case .xcode:
+            print(XcodeDiagnostics.render(reports))
+            print(XcodeDiagnostics.summary(reports, reportPath: report))
         }
     }
 }
