@@ -6,6 +6,41 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
+			<key>XCSourceEditorCommandDefinitions</key>
+			<array>
+				<dict>
+					<key>XCSourceEditorCommandClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
+					<key>XCSourceEditorCommandIdentifier</key>
+					<string>dev.stability.capture-closure-dependencies</string>
+					<key>XCSourceEditorCommandName</key>
+					<string>Capture What the Closure Needs</string>
+				</dict>
+				<dict>
+					<key>XCSourceEditorCommandClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
+					<key>XCSourceEditorCommandIdentifier</key>
+					<string>dev.stability.make-equatable</string>
+					<key>XCSourceEditorCommandName</key>
+					<string>Make Equatable Without Closures</string>
+				</dict>
+				<dict>
+					<key>XCSourceEditorCommandClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
+					<key>XCSourceEditorCommandIdentifier</key>
+					<string>dev.stability.toggle-print-changes</string>
+					<key>XCSourceEditorCommandName</key>
+					<string>Toggle Self._printChanges()</string>
+				</dict>
+				<dict>
+					<key>XCSourceEditorCommandClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
+					<key>XCSourceEditorCommandIdentifier</key>
+					<string>dev.stability.ignore-finding</string>
+					<key>XCSourceEditorCommandName</key>
+					<string>Ignore Finding on This Line</string>
+				</dict>
+			</array>
 			<key>XCSourceEditorExtensionPrincipalClass</key>
 			<string>$(PRODUCT_MODULE_NAME).SourceEditorExtension</string>
 		</dict>

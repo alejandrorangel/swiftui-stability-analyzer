@@ -5,7 +5,10 @@
 #
 # Then: System Settings → General → Login Items & Extensions → Xcode Source Editor → turn on
 # "SwiftUI Stability", restart Xcode, and use Editor → SwiftUI Stability. Re-run to update.
-# Signed to run locally (no developer team needed). To remove: delete ~/Applications/SwiftUI Stability.app.
+# Xcode only loads extensions signed with an Apple-issued certificate, so this signs with your "Apple
+# Development" certificate from the keychain (or SWIFTUI_STABILITY_SIGNING_IDENTITY="<name or SHA-1>").
+# Signing is manual and local: no provisioning profile, nothing registered with Apple.
+# To remove: delete ~/Applications/SwiftUI Stability.app.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,10 +28,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+IDENTITY=${SWIFTUI_STABILITY_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning \
+    | sed -n 's/.*"\(Apple Development: .*\)"/\1/p' | head -1)}
+if [ -n "$IDENTITY" ]; then
+    echo "Signing with: $IDENTITY"
+else
+    IDENTITY=-
+    echo "warning: no Apple Development certificate found; signing ad hoc, which Xcode refuses to load." >&2
+    echo "         Add one in Xcode → Settings → Accounts → Manage Certificates (a free Personal Team works)." >&2
+fi
+
 echo "Building the extension (Release)…"
 xcodebuild -project "$ROOT/EditorExtension/SwiftUIStability.xcodeproj" -scheme SwiftUIStability \
     -configuration Release -derivedDataPath "$BUILD" \
-    CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= build >"$BUILD/build.log" 2>&1 \
+    CODE_SIGN_IDENTITY="$IDENTITY" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
+    build >"$BUILD/build.log" 2>&1 \
     || { tail -20 "$BUILD/build.log"; exit 1; }
 
 mkdir -p "$DEST"
