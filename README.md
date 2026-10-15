@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.5.0`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.6.0`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.5.0"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.6.0"),
 ],
 targets: [
     .target(
@@ -47,6 +47,23 @@ swiftui-stability --version
 ```
 
 Re-run `git pull && scripts/install.sh --skill` to update. The skill (`~/.claude/skills/swiftui-stability`) tells AI agents when to run the analyzer, how to read its output, and how to fix each rule. Leave out `--skill` to install only the command.
+
+### 4. Xcode Source Editor Extension (one-click fixes)
+
+```sh
+scripts/install-extension.sh   # builds it, installs ~/Applications/SwiftUI Stability.app, opens it once
+```
+
+Then turn it on in **System Settings → General → Login Items & Extensions → Xcode Source Editor**, restart Xcode, and use **Editor → SwiftUI Stability** with the cursor on the code (assign shortcuts in Xcode → Settings → Key Bindings):
+
+| Command | What it does |
+|---|---|
+| Capture What the Closure Needs | Fixes `closure-captures-self`: `{ model.select(item) }` → `{ [model] in model.select(item) }`. Explains instead when the closure writes the view's state or calls its methods |
+| Make Equatable Without Closures | Adds `Equatable` and a `nonisolated static func ==` comparing every input except closures and SwiftUI-owned state (`===` for objects) |
+| Toggle Self._printChanges() | Adds or removes `let _ = Self._printChanges()` at the top of the view's `body` (or a modifier's `body(content:)`) |
+| Ignore Finding on This Line | Inserts `// swiftui-stability:ignore <rule> — ` above the line, for the reason |
+
+Xcode gives an extension only the current file, so findings that need other files (types declared elsewhere) aren't visible to it; the build plugin and CLI see the whole module. It's signed to run locally; no developer team needed.
 
 ## Use the command-line tool
 
@@ -157,7 +174,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.5.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.6.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```
@@ -169,6 +186,8 @@ To accept an intended change, run `dump` again and commit the updated baseline t
 ```sh
 swift build
 swift test
+xcodebuild -project EditorExtension/SwiftUIStability.xcodeproj -scheme SwiftUIStability CODE_SIGN_IDENTITY=- build
+Validation/run.sh "iPhone 17"   # the measured rules still hold
 ```
 
 ## Inspiration
