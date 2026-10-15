@@ -12,6 +12,14 @@
 					<key>XCSourceEditorCommandClassName</key>
 					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
 					<key>XCSourceEditorCommandIdentifier</key>
+					<string>dev.stability.toggle-annotations</string>
+					<key>XCSourceEditorCommandName</key>
+					<string>Toggle Stability Annotations</string>
+				</dict>
+				<dict>
+					<key>XCSourceEditorCommandClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).StabilityCommand</string>
+					<key>XCSourceEditorCommandIdentifier</key>
 					<string>dev.stability.capture-closure-dependencies</string>
 					<key>XCSourceEditorCommandName</key>
 					<string>Capture What the Closure Needs</string>

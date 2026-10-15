@@ -156,6 +156,83 @@ public enum Fixes {
         return file.replacing(first.positionAfterSkippingLeadingTrivia, length: 0, with: "\(printChanges)\n\(indent)")
     }
 
+    /// The trailing comments `toggleStabilityAnnotations` writes; removal matches exactly these.
+    static let annotationMarkers = ["✅ skippable", "⚠️ depends", "❌ can't skip", "🟢 stable", "🟡 runtime", "🟡 unknown",
+                                    "🔴 unstable", "⚪ owned"]
+
+    /// Adds a stability comment to the end of each view's declaration line and each stored property line, like
+    /// Compose's inline hints; if the file has any, removes them all instead.
+    ///
+    /// `moduleReports` (e.g. the build plugin's last report) are used for views whose name and properties
+    /// match, because they were analyzed with the whole module; other views are analyzed from this file alone.
+    public static func toggleStabilityAnnotations(in source: String, moduleReports: [ViewReport] = []) throws -> String {
+        let lines = source.components(separatedBy: "\n")
+        let markers = annotationMarkers.map { " // \($0)" }
+        if lines.contains(where: { line in markers.contains { line.contains($0) } }) {
+            return lines.map { line in
+                guard let range = markers.compactMap({ line.range(of: $0) }).min(by: { $0.lowerBound < $1.lowerBound }) else { return line }
+                return String(line[..<range.lowerBound])
+            }.joined(separator: "\n")
+        }
+
+        let local = Analyzer.analyze([SourceFile(path: "buffer.swift", text: source)])
+        guard !local.isEmpty else { throw FixError("No SwiftUI views, modifiers or representables in this file.") }
+        let byName = Dictionary(moduleReports.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let file = ParsedFile(source)
+        var structLines: [String: Int] = [:]
+        for decl in StructCollector.collect(file.tree) where structLines[decl.name] == nil {
+            // The `struct` line, not an attribute line above it.
+            structLines[decl.name] = file.line(ofPosition: decl.node.structKeyword.positionAfterSkippingLeadingTrivia)
+        }
+
+        var annotations: [Int: String] = [:]
+        for report in local {
+            // Prefer the module-wide verdicts when they describe the same declaration.
+            var source = report
+            if let module = byName[report.name], module.properties.map(\.name) == report.properties.map(\.name) {
+                source = module
+            }
+            let unstable = source.comparedProperties.filter { $0.stability == .unstable }.map(\.name)
+            let pending = source.comparedProperties.filter { $0.stability == .runtime || $0.stability == .unknown }.map(\.name)
+            let compared = source.comparedProperties.count
+            let stableCount = source.comparedProperties.filter { $0.stability == .stable }.count
+            let summary = switch source.skippable {
+            case .yes: "✅ skippable" + (source.customEquality ? " (custom ==)" : " (\(stableCount)/\(compared) stable)")
+            case .depends: "⚠️ depends: \(pending.joined(separator: ", "))"
+            case .no: "❌ can't skip: \(unstable.joined(separator: ", "))"
+            }
+            annotations[structLines[report.name.split(separator: ".").map(String.init).last ?? report.name] ?? report.line] = summary
+            for (property, local) in zip(source.properties, report.properties) {
+                let label = if !property.compared {
+                    "⚪ owned — \(property.wrapper.map { "@\($0)" } ?? "")"
+                } else {
+                    switch property.stability {
+                    case .stable: "🟢 stable — \(short(property.reason))"
+                    case .runtime: "🟡 runtime — \(short(property.reason))"
+                    case .unknown: "🟡 unknown — \(short(property.reason))"
+                    case .unstable: "🔴 unstable — \(short(property.reason))"
+                    }
+                }
+                annotations[local.line] = label
+            }
+        }
+
+        return lines.enumerated().map { index, line in
+            guard let annotation = annotations[index + 1] else { return line }
+            return line + " // " + annotation
+        }.joined(separator: "\n")
+    }
+
+    /// A reason short enough for an end-of-line comment: up to the first `;`, at most about 60 characters.
+    static func short(_ reason: String) -> String {
+        var text = reason.components(separatedBy: "; ").first ?? reason
+        if text.count > 60 {
+            let cut = text.prefix(60)
+            text = String(cut[..<(cut.lastIndex(of: " ") ?? cut.endIndex)]) + "…"
+        }
+        return text
+    }
+
     /// Inserts `// swiftui-stability:ignore <rule> — ` above the line with a finding, for the reason to be typed.
     public static func ignoreFinding(in source: String, line: Int) throws -> String {
         let reports = Analyzer.analyze([SourceFile(path: "buffer.swift", text: source)])
@@ -238,6 +315,22 @@ private struct ParsedFile {
         var bytes = Array(source.utf8)
         bytes.replaceSubrange(position.utf8Offset..<(position.utf8Offset + length), with: Array(text.utf8))
         return String(decoding: bytes, as: UTF8.self)
+    }
+}
+
+/// Struct declarations by simple name.
+private final class StructCollector: SyntaxVisitor {
+    var decls: [(name: String, node: StructDeclSyntax)] = []
+
+    static func collect(_ tree: SourceFileSyntax) -> [(name: String, node: StructDeclSyntax)] {
+        let collector = StructCollector(viewMode: .sourceAccurate)
+        collector.walk(tree)
+        return collector.decls
+    }
+
+    override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind {
+        decls.append((node.name.text, node))
+        return .visitChildren
     }
 }
 

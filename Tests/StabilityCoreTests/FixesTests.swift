@@ -129,3 +129,53 @@ struct Screen: View {
     #expect(fixed.contains("    // swiftui-stability:ignore any-view — \n    let content: AnyView"))
     #expect(throws: FixError.self) { try Fixes.ignoreFinding(in: source, line: 3) }
 }
+
+// MARK: annotations
+
+private let annotatable = """
+@MainActor
+struct Row: View {
+    let title: String
+    let model: ExternalModel
+    let content: AnyView
+    @State private var on = false
+
+    var body: some View { content }
+}
+"""
+
+@Test func annotationsMarkViewsAndPropertiesAndRoundTrip() throws {
+    let annotated = try Fixes.toggleStabilityAnnotations(in: annotatable)
+    let lines = annotated.components(separatedBy: "\n")
+    #expect(lines[0] == "@MainActor")
+    #expect(lines[1] == "struct Row: View { // ❌ can't skip: content")
+    #expect(lines[2] == "    let title: String // 🟢 stable — Equatable value")
+    #expect(lines[3].hasPrefix("    let model: ExternalModel // 🟡 unknown — `ExternalModel` is declared outside"))
+    #expect(lines[4].hasPrefix("    let content: AnyView // 🔴 unstable — AnyView"))
+    #expect(lines[5] == "    @State private var on = false // ⚪ owned — @State")
+    #expect(lines[7] == "    var body: some View { content }")
+    #expect(try Fixes.toggleStabilityAnnotations(in: annotated) == annotatable)
+}
+
+@Test func moduleReportsOverrideSingleFileVerdicts() throws {
+    // Analyzed with the module, ExternalModel is an Equatable struct.
+    let module = Analyzer.analyze([
+        SourceFile(path: "Row.swift", text: annotatable),
+        SourceFile(path: "Model.swift", text: "struct ExternalModel: Equatable { var id: Int }"),
+    ])
+    let annotated = try Fixes.toggleStabilityAnnotations(in: annotatable, moduleReports: module)
+    #expect(annotated.contains("let model: ExternalModel // 🟢 stable — Equatable"))
+}
+
+@Test func annotationsLeaveOtherCommentsAlone() throws {
+    let source = "struct V: View {\n    let a: Int // 🟢 my own note\n    var body: some View { EmptyView() }\n}"
+    let annotated = try Fixes.toggleStabilityAnnotations(in: source)
+    #expect(annotated.contains("let a: Int // 🟢 my own note // 🟢 stable"))
+    #expect(try Fixes.toggleStabilityAnnotations(in: annotated) == source)
+}
+
+@Test func shortReasons() {
+    #expect(Fixes.short("owned by SwiftUI, not compared; writes re-run body") == "owned by SwiftUI, not compared")
+    #expect(Fixes.short("closure: equal unless the caller's closure captures changing state (e.g. its `self`)")
+        == "closure: equal unless the caller's closure captures…")
+}
