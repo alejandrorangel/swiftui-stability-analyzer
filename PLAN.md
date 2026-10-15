@@ -58,7 +58,7 @@ All of them share `StabilityCore`, so there's one implementation of the rules.
      - Next: a prebuilt `artifactbundle` + `binaryTarget` release (as SwiftLint does) so adopters don't compile swift-syntax; a config file to pick rules and severities, and to turn regressions against the baseline into errors.
    - Source Editor Extension with the commands above.
 3. **Runtime**: `swiftui-stability trace` driving `xctrace record --template SwiftUI --launch` (or attach), `xctrace export` → per-view body counts (heatmap) → reality check: *Confirmed* (predicted unstable, re-runs often), *False alarm* (predicted unstable, rarely re-runs), *Silent waste* (predicted stable, re-runs often). The SwiftUI template exists in this Xcode (`xctrace list templates`); its export schema still needs a spike.
-4. **Agents**: skill file (`swiftui-stability analyze --unstable-only --json` before/after edits); optionally an `ios stability` passthrough in ios-cli.
+4. **Agents**: ✅ skill (`skills/swiftui-stability/SKILL.md`, installed by `scripts/install.sh --skill`): when to run, before/after workflow, reading the output, a fix per rule. Next: a prebuilt release binary with a one-line installer (as ios-cli's `get.sh`); optionally an `ios stability` passthrough in ios-cli.
 
 ## Known limits of v0.1
 
