@@ -78,3 +78,9 @@ Only `warning` findings and views that can't skip are reported in Xcode; `info` 
 - run: swift build -c release --package-path tools/swiftui-stability-analyzer
 - run: tools/swiftui-stability-analyzer/.build/release/swiftui-stability check Sources/MyApp
 ```
+
+## Inspiration
+
+This project is inspired by [compose-stability-analyzer](https://github.com/skydoves/compose-stability-analyzer) by [Jaewoong Eum (skydoves)](https://github.com/skydoves), which does this for Jetpack Compose. It borrows that project's ideas and vocabulary: the four stability levels (stable, runtime, unknown, unstable), a committed baseline checked in CI (`dump` / `check`, with `~ + -` change notation), inline IDE feedback, and runtime tracing as the next step. The implementation is separate, and this project isn't affiliated with it.
+
+SwiftUI's diffing rules are undocumented. The model here follows public write-ups, chiefly [Airbnb's Understanding and Improving SwiftUI Performance](https://airbnb.tech/web/understanding-and-improving-swiftui-performance/) and [Chris Eidhof's notes on SwiftUI view equality](https://chris.eidhof.nl/note/swiftui-view-equality); see [PLAN.md](PLAN.md) for what still needs verifying.
