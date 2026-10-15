@@ -10,9 +10,11 @@ How SwiftUI actually decides whether to re-run a child's `body`, measured with [
 |---|---|
 | iPhone 17 simulator, iOS 27.0 (24A434), Debug | 40/40 (6 runs) |
 | iPhone 17 simulator, iOS 26.5 (23F77), Debug | 40/40 |
-| Physical device | not yet measured |
-| Release build | not yet measured |
+| iPad Pro 12.9" (5th gen), iOS 27.0.1 (24A446), Debug | 40/40 (2 runs, identical) |
+| iPad Pro 12.9" (5th gen), iOS 27.0.1 (24A446), Release | 40/40 (2 runs, identical) |
 | iOS 17 / 18 | not yet measured (no runtime installed) |
+
+The iPad runs were made inside another app's Debug and Release builds (deployment target iOS 16.6, Swift 6 strict concurrency), with the supporting types renamed to avoid clashes. Device and simulator counts match except `ArrayInput` (2 in Debug, 1 in Release); no case changed verdict. Under Swift 6 with main-actor default isolation, an `Equatable` view's `==` has to be `nonisolated` (`nonisolated static func ==`), otherwise the conformance doesn't compile ([#ConformanceIsolation]).
 
 ## What SwiftUI does
 

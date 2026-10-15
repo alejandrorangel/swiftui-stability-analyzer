@@ -42,7 +42,7 @@ ProfileScreen  skippable: yes  Sources/ProfileScreen.swift:8
 
 | Rule | Fix |
 |---|---|
-| `closure-captures-self` | Capture only what the closure needs: `{ [model] in model.select(item) }` (a local copy or capture list compares equal), or pass a method of a model object (`model.select`) instead of the view's own method. Only worth it for expensive children or frequently updating parents. Alternatively make the child `Equatable` without the closure (SwiftUI uses `==` automatically). |
+| `closure-captures-self` | Capture only what the closure needs: `{ [model] in model.select(item) }` (a local copy or capture list compares equal), or pass a method of a model object (`model.select`) instead of the view's own method. Only worth it for expensive children or frequently updating parents. Alternatively make the child `Equatable` without the closure (SwiftUI uses `==` automatically; with main-actor default isolation write `nonisolated static func ==`). |
 | `closure-property` (info) | Nothing to fix in the child by itself; see `closure-captures-self` at its call sites. |
 | `stored-view-builder` | Store the built view: `let content: Content` with `init(@ViewBuilder content: () -> Content) { self.content = content() }`. |
 | `observed-object-initialized` | `@ObservedObject var x = X()` → `@StateObject`, or `@State` with an `@Observable` class. This is a correctness bug: the object is recreated by the parent. |
