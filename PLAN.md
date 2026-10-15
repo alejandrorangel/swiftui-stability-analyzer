@@ -10,7 +10,7 @@ Compose has a formal model. The compiler infers stability, writes `$stable` fiel
 
 - Before re-running a child's `body`, SwiftUI compares the child's stored properties with their previous values.
 - Equatable types are compared with `==`, other value types field by field, and classes by identity.
-- Closures practically never compare equal, so one closure property makes the view re-run with its parent.
+- Closures practically never compare equal, so one closure property makes the view re-run with its parent. *(Measured wrong in Phase 0: closures compare by what they capture; see below.)*
 - Property wrappers SwiftUI owns (`@State`, `@Environment`…) aren't compared. They invalidate the view directly: an ObservableObject on any `@Published` change, an `@Observable` class only for the properties `body` read.
 - A view that conforms to `Equatable` and is wrapped in `.equatable()` uses its own `==`.
 
@@ -47,7 +47,7 @@ All of them share `StabilityCore`, so there's one implementation of the rules.
 
 ## Phases
 
-0. **Validate the model** (next). Build a fixture app with one view per property kind: Int, Equatable struct, non-Equatable struct of values, struct holding a closure, closure, class, Binding, generic content, AnyView, `@ViewBuilder` closure vs stored content. Re-render the parent N times and count each child's body runs with `_logChanges()`, run it through ios-cli (`ios run`, `ios logs`). Lock the results into the rules and into tests. Open questions: Binding comparison, non-capturing closures, POD memcmp vs field-wise, AnyView, whether Equatable views use `==` without `.equatable()`.
+0. **Validate the model** ✅ (v0.4, simulator, iOS 27). [Validation/RESULTS.md](Validation/RESULTS.md); `Validation/run.sh` re-runs it. 40 cases; the pre-measurement model got 28/40, the current one 40/40. What changed: closures are compared by what they capture (the problem is a closure capturing the caller's `self`, now reported at the call site as `closure-captures-self`); `AnyView` never compares equal; an `Equatable` view's `==` is used without `.equatable()`. Still to measure: a physical device, iOS 17/18, Release builds. Original plan: Build a fixture app with one view per property kind: Int, Equatable struct, non-Equatable struct of values, struct holding a closure, closure, class, Binding, generic content, AnyView, `@ViewBuilder` closure vs stored content. Re-render the parent N times and count each child's body runs with `_logChanges()`, run it through ios-cli (`ios run`, `ios logs`). Lock the results into the rules and into tests. Open questions: Binding comparison, non-capturing closures, POD memcmp vs field-wise, AnyView, whether Equatable views use `==` without `.equatable()`.
 1. **Static analyzer** ✅ v0.1: classifier, findings, dump/check, xcode format, 19 tests.
    - Next: `.stability-config` for types from other modules (`Foundation.Measurement=stable`, `MyKit.*=stable`, as in Compose's stability configuration file); per-line suppression (`// stability:ignore closure-property`); module-qualified names in the baseline when two modules declare the same view name.
 2. **Xcode integration**

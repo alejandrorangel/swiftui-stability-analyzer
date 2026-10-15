@@ -13,7 +13,7 @@ private func analyze(_ sources: String...) -> [ViewReport] {
     }
     """).first)
     #expect(report.kind == .modifier)
-    #expect(report.skippable == .no)
+    #expect(report.skippable == .depends)
     #expect(report.findings.map(\.rule) == ["closure-property"])
     #expect(report.findings.first?.message.contains("`TapToSeek.body(content:)`") == true)
 }
@@ -62,7 +62,7 @@ private func analyze(_ sources: String...) -> [ViewReport] {
     }
     """)
     #expect(reports.first?.properties.map(\.name) == ["count", "onClear", "onClear"])
-    #expect(reports.first?.skippable == .no)
+    #expect(reports.first?.skippable == .depends)
 }
 
 @Test func ignoreCommentSuppressesARule() throws {
@@ -321,4 +321,90 @@ private func closureFindingSuppressed(_ declaration: String) -> Bool {
     """).first
     #expect(report?.suppressed.map(\.line) == [2])
     #expect(report?.findings.map(\.line) == [3])
+}
+
+// closure-captures-self: measured to re-run the child on every parent update.
+
+private func callSiteFindings(_ parentBody: String, child: String = """
+    struct Row: View {
+        let title: String
+        let onTap: () -> Void
+        var body: some View { Text(title) }
+    }
+    """) -> [Finding] {
+    let reports = analyze(child, """
+    final class Model { func select(_ id: Int) {} }
+    struct Screen: View {
+        @State private var selected = 0
+        @State private var model = Model()
+        let items: [Int]
+        var body: some View {
+    \(parentBody)
+        }
+        private func open() {}
+    }
+    """)
+    return reports.first { $0.name == "Screen" }?.findings.filter { $0.rule == "closure-captures-self" } ?? []
+}
+
+@Test func closureReadingParentStateIsFlagged() {
+    let findings = callSiteFindings("        Row(title: \"a\", onTap: { selected += 1 })")
+    #expect(findings.count == 1)
+    #expect(findings.first?.message.contains("reads `selected`") == true)
+}
+
+@Test func parentMethodReferenceIsFlagged() {
+    #expect(callSiteFindings("        Row(title: \"a\", onTap: open)").first?.message.contains("method `open`") == true)
+    #expect(callSiteFindings("        Row(title: \"a\", onTap: self.open)").count == 1)
+}
+
+@Test func closureInsideForEachCallingParentIsFlagged() {
+    #expect(callSiteFindings("""
+            ForEach(items, id: \\.self) { item in
+                Row(title: "\\(item)", onTap: { model.select(item) })
+            }
+    """).count == 1)
+}
+
+@Test func captureListAndLocalsAreNotSelf() {
+    #expect(callSiteFindings("""
+            let model = self.model
+            Row(title: "a", onTap: { [selected] in print(selected) })
+            Row(title: "b", onTap: { model.select(1) })
+            Row(title: "c", onTap: {})
+            ForEach(items, id: \\.self) { item in Row(title: "d", onTap: { print(item) }) }
+    """).isEmpty)
+}
+
+@Test func explicitSelfCaptureIsFlagged() {
+    #expect(callSiteFindings("        Row(title: \"a\", onTap: { [weak self] in _ = self })").isEmpty == false)
+}
+
+@Test func trailingViewBuilderContentReadingParentIsFlagged() {
+    let card = """
+    struct Card<Content: View>: View {
+        let content: () -> Content
+        var body: some View { content() }
+    }
+    """
+    let findings = callSiteFindings("        Card { Text(\"\\(selected)\") }", child: card)
+    #expect(findings.first?.message.contains("its trailing closure") == true)
+}
+
+@Test func equatableChildrenAreNotFlagged() {
+    let row = """
+    struct Row: View, Equatable {
+        let title: String
+        let onTap: () -> Void
+        static func == (a: Row, b: Row) -> Bool { a.title == b.title }
+        var body: some View { Text(title) }
+    }
+    """
+    #expect(callSiteFindings("        Row(title: \"a\", onTap: { selected += 1 })", child: row).isEmpty)
+}
+
+@Test func memberNamesOfOtherValuesArentSelf() {
+    #expect(callSiteFindings("""
+            ForEach(items, id: \\.self) { item in Row(title: "a", onTap: { print(item.description, item.items) }) }
+    """).isEmpty)
 }

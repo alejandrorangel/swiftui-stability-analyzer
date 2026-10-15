@@ -36,7 +36,9 @@ final class Classifier {
     func classify(_ type: TypeRef, generics: Set<String>, scope: [String]) -> Classification {
         switch type {
         case .function:
-            return .init(stability: .unstable, reason: "closure: closures never compare equal")
+            // Measured (Validation/): SwiftUI compares a closure by its function and captured values. One that
+            // captures nothing or only unchanged values compares equal; one that captures the caller's `self` doesn't.
+            return .init(stability: .runtime, reason: "closure: equal unless the caller's closure captures changing state (e.g. its `self`)")
         case .optional(let wrapped), .array(let wrapped):
             return classify(wrapped, generics: generics, scope: scope)
         case .dictionary(let key, let value):
@@ -72,7 +74,7 @@ final class Classifier {
         case "Binding":
             return .init(stability: .stable, reason: "Binding: SwiftUI compares bindings itself")
         case "AnyView":
-            return .init(stability: .unknown, reason: "AnyView: type-erased, SwiftUI can't see its structure")
+            return .init(stability: .unstable, reason: "AnyView: never compares equal, even wrapping the same view")
         case "AnyShapeStyle", "AnyShape", "AnyTransition", "AnyLayout", "AnyGesture":
             return .init(stability: .unknown, reason: "type-erased `\(name)`")
         default:

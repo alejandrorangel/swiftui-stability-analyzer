@@ -6,7 +6,7 @@ struct SwiftUIStability: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swiftui-stability",
         abstract: "Reports which SwiftUI views can skip `body` when their parent re-renders, and why.",
-        version: "0.3.2",
+        version: "0.4.0",
         subcommands: [Analyze.self, Dump.self, Check.self],
         defaultSubcommand: Analyze.self
     )

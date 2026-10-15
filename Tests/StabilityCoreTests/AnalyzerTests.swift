@@ -23,26 +23,36 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
     #expect(report?.properties.map(\.stability) == [.stable, .stable, .stable])
 }
 
-@Test func closuresAreUnstableAndReported() {
+/// Measured: a closure compares by what it captures, so it depends on the caller.
+@Test func closuresDependOnTheCaller() {
     let report = analyze("""
     struct V: View {
         let action: (() -> Void)?
         var body: some View { EmptyView() }
     }
     """)["V"]
-    #expect(report?.skippable == .no)
-    #expect(property(report, "action")?.stability == .unstable)
+    #expect(report?.skippable == .depends)
+    #expect(property(report, "action")?.stability == .runtime)
     #expect(report?.findings.map(\.rule) == ["closure-property"])
+    #expect(report?.findings.first?.severity == .info)
+}
+
+/// Measured: AnyView re-runs on every parent update, even wrapping the same view.
+@Test func anyViewIsUnstable() {
+    let report = analyze("struct V: View { let content: AnyView; var body: some View { content } }")["V"]
+    #expect(report?.skippable == .no)
+    #expect(report?.findings.map(\.rule) == ["any-view"])
+    #expect(report?.findings.first?.severity == .warning)
 }
 
 @Test func typesResolveAcrossFiles() {
     let views = analyze(
         "struct V: View { let model: Model; var body: some View { EmptyView() } }",
         "struct Model { var name: String; var handler: Handler }",
-        "struct Handler { var run: () -> Void }"
+        "struct Handler { var body: AnyView }"
     )
     #expect(property(views["V"], "model")?.stability == .unstable)
-    #expect(property(views["V"], "model")?.reason.contains("Handler.run") == true)
+    #expect(property(views["V"], "model")?.reason.contains("Handler.body") == true)
 }
 
 @Test func equatableInExtensionMakesAStructStable() {
@@ -119,7 +129,8 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
     #expect(views["Card"]?.findings.map(\.rule) == ["stored-view-builder"])
 }
 
-@Test func customEqualityMakesClosuresDepend() {
+/// Measured on iOS 27: SwiftUI uses an Equatable view's `==` even without `.equatable()`.
+@Test func customEqualityMakesAViewSkippable() {
     let views = analyze("""
     struct V: View, Equatable {
         let n: Int
@@ -128,7 +139,7 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
         var body: some View { EmptyView() }
     }
     """)
-    #expect(views["V"]?.skippable == .depends)
+    #expect(views["V"]?.skippable == .yes)
     #expect(views["V"]?.findings.isEmpty == true)
 }
 
@@ -179,5 +190,5 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
     }
     """)
     #expect(views["V"]?.properties.map(\.wrapper) == [nil, nil, "State"])
-    #expect(property(views["V"], "action")?.stability == .unstable)
+    #expect(property(views["V"], "action")?.stability == .runtime)
 }

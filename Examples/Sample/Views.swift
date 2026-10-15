@@ -58,3 +58,13 @@ struct Badge: View, Equatable {
     static func == (a: Badge, b: Badge) -> Bool { a.count == b.count }
     var body: some View { Text("\(count)") }
 }
+
+struct ProfileScreen: View {
+    @State private var taps = 0
+    let user: User
+
+    var body: some View {
+        // Reads `taps` through `self`: ProfileView re-runs on every ProfileScreen update.
+        ProfileView(user: user, theme: Theme(accent: .blue, radius: 8), onTap: { taps += 1 })
+    }
+}

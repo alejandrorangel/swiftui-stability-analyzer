@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.3.2`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.4.0`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.3.2"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.4.0"),
 ],
 targets: [
     .target(
@@ -63,19 +63,28 @@ swiftui-stability check MyApp/                    # exit 1 on changes; --ignore-
 Example (`Examples/Sample`):
 
 ```
-ProfileView  skippable: no  Examples/Sample/Views.swift:22
+ProfileView  skippable: depends  Examples/Sample/Views.swift:22
   stable   user: User  — Equatable
   stable   theme: Theme  — all stored properties are stable
-  unstable onTap: () -> Void  — closure: closures never compare equal
+  runtime  onTap: () -> Void  — closure: equal unless the caller's closure captures changing state (e.g. its `self`)
   owned    @State isExpanded: Bool  — owned by SwiftUI, not compared; writes re-run body
   owned    @Environment model: ProfileModel  — not compared; re-runs body only when properties it reads change
-  warning [closure-property] line 25: `onTap` is a closure, which never compares equal, …
+  info [closure-property] line 25: `onTap` is a closure. SwiftUI compares closures by what they capture: …
+
+ProfileScreen  skippable: yes  Examples/Sample/Views.swift:62
+  owned    @State taps: Int  — owned by SwiftUI, not compared; writes re-run body
+  stable   user: User  — Equatable
+  warning [closure-captures-self] line 68: The closure passed to `ProfileView` as `onTap:` reads `taps`, so it
+    captures `self` and differs whenever `ProfileScreen`'s own state or inputs change: `ProfileView` re-runs each time. …
 ```
 
-- **skippable:** `yes` means every compared input is stable. `depends` means a generic input, a type from another module, or a custom `==`. `no` means an input never compares equal.
-- **Property levels:** `stable`, `runtime` (generic), `unknown` and `unstable` describe properties SwiftUI compares. `owned` is SwiftUI's own storage (`@State`, `@Environment`…): it isn't compared, but changes to it invalidate the view directly.
+- **skippable:** `yes` means every compared input is stable, or the type is `Equatable`. `depends` means a generic input, a closure (it depends on what callers capture), or a type from another module. `no` means an input never compares equal.
+- **Property levels:** `stable`, `runtime` (depends on the caller: a generic or a closure), `unknown` and `unstable` describe properties SwiftUI compares.
+- **Call sites:** whether a closure compares equal is decided where it's written, so `closure-captures-self` is reported on the parent's line that passes it.
 
-`check` after a model type changes in another file:
+The rules are measured, not guessed: [Validation/RESULTS.md](Validation/RESULTS.md) has how SwiftUI really behaves (iOS 27) and how the predictions compare (40/40), reproducible with `Validation/run.sh`. `owned` is SwiftUI's own storage (`@State`, `@Environment`…): it isn't compared, but changes to it invalidate the view directly.
+
+`check` after a model type in another file becomes unstable:
 
 ```
 ~ ProfileView.user: User stable → User unstable   ← regression
@@ -89,8 +98,10 @@ In Xcode, only `warning` findings and views that can't skip are reported; `info`
 
 | Rule | Severity | What |
 |---|---|---|
-| `closure-property` | warning | A stored closure keeps the view from skipping |
-| `stored-view-builder` | warning | `let content: () -> Content`; store `Content` instead |
+| `closure-captures-self` | warning | At a call site: a closure (or a method reference) passed to a child reads the parent's state or methods, so it captures `self`, differs on every parent update, and re-runs the child. Measured. Fix: `{ [model] in model.select(item) }` |
+| `stored-view-builder` | warning | `let content: () -> Content`: callers' content usually captures their `self`; store `Content` instead |
+| `any-view` | warning / info | A stored `AnyView` never compares equal (measured), so the view re-runs on every parent update (warning); `AnyView(…)` in a body (info) |
+| `closure-property` | info | A stored closure: stable only if callers pass closures that don't capture their `self` |
 | `observed-object-initialized` | warning | `@ObservedObject var x = X()` is recreated by the parent |
 | `state-plain-class` | warning | `@State` holding a non-`@Observable` class |
 | `frequent-updates` | warning / info | An observed object whose class has a display link, timer or sleep loop that writes observed state on each tick (directly or through its own methods; one-shot writes followed by `break`/`return` don't count). Each tick re-runs `body`. Warning for an ObservableObject (whole body), info for `@Observable` |
@@ -98,7 +109,6 @@ In Xcode, only `warning` findings and views that can't skip are reported; `info`
 | `foreach-indices` | warning | `ForEach(items.indices)` ties identity to position |
 | `foreach-id-self` | info | `id: \.self` identifies rows by value |
 | `observable-object` | info | ObservableObject invalidates on any `@Published` change |
-| `any-view` | info | `AnyView` erases structural identity |
 
 ### Suppressing a finding
 
@@ -124,7 +134,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.3.2 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.4.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```
@@ -142,4 +152,4 @@ swift test
 
 This project is inspired by [compose-stability-analyzer](https://github.com/skydoves/compose-stability-analyzer) by [Jaewoong Eum (skydoves)](https://github.com/skydoves), which does this for Jetpack Compose. It borrows that project's ideas and vocabulary: the four stability levels (stable, runtime, unknown, unstable), a committed baseline checked in CI (`dump` / `check`, with `~ + -` change notation), inline IDE feedback, and runtime tracing as the next step. The implementation is separate, and this project isn't affiliated with it.
 
-SwiftUI's diffing rules are undocumented. The model here follows public write-ups, chiefly [Airbnb's Understanding and Improving SwiftUI Performance](https://airbnb.tech/web/understanding-and-improving-swiftui-performance/) and [Chris Eidhof's notes on SwiftUI view equality](https://chris.eidhof.nl/note/swiftui-view-equality); see [PLAN.md](PLAN.md) for what still needs verifying.
+SwiftUI's diffing rules are undocumented. The model started from public write-ups and is now checked against measurements ([Validation/RESULTS.md](Validation/RESULTS.md)); the write-ups were chiefly [Airbnb's Understanding and Improving SwiftUI Performance](https://airbnb.tech/web/understanding-and-improving-swiftui-performance/) and [Chris Eidhof's notes on SwiftUI view equality](https://chris.eidhof.nl/note/swiftui-view-equality); see [PLAN.md](PLAN.md) for what still needs verifying.

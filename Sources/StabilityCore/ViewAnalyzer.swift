@@ -34,14 +34,19 @@ public enum Analyzer {
         }
 
         let worst = properties.filter(\.compared).map(\.stability).max() ?? .stable
-        let skippable: Skippability = switch worst {
-        case .stable: .yes
-        case .runtime, .unknown: .depends
-        case .unstable: view.isEquatable ? .depends : .no
+        // Measured on iOS 27: SwiftUI uses an Equatable view's own `==`, with or without `.equatable()`.
+        let skippable: Skippability = if view.isEquatable {
+            .yes
+        } else {
+            switch worst {
+            case .stable: .yes
+            case .runtime, .unknown: .depends
+            case .unstable: .no
+            }
         }
 
         if let members = view.members, let converter = view.converter {
-            let scanner = BodyScanner(converter: converter)
+            let scanner = BodyScanner(converter: converter, members: members, index: index, scope: scope, owner: view.name)
             scanner.walk(members)
             findings += scanner.findings
         }
@@ -161,14 +166,14 @@ public enum Analyzer {
         if type.isFunction {
             if case .named(let name, _)? = closureResult(property.typeText), view.genericParameters.contains(name) {
                 finding("stored-view-builder", .warning,
-                        "`\(property.name)` stores a view-building closure. Store the built view instead (`let \(property.name): \(name)`, built in `init(@ViewBuilder \(property.name): () -> \(name))`): a view value is compared, a closure never is.")
+                        "`\(property.name)` stores a view-building closure. Callers usually build content from their own state (`\(view.name) { Text(title) }`), which captures their `self`, so \(entryPoint) re-runs on every caller update. Store the built view instead (`let \(property.name): \(name)`, built in `init(@ViewBuilder \(property.name): () -> \(name))`).")
             } else if !view.isEquatable {
-                finding("closure-property", .warning,
-                        "`\(property.name)` is a closure, which never compares equal, so \(entryPoint) re-runs whenever its parent's body does. If that matters here, make the type Equatable without the closure and apply `.equatable()`.")
+                finding("closure-property", .info,
+                        "`\(property.name)` is a closure. SwiftUI compares closures by what they capture: a caller passing a closure that reads its own state (`self`) makes \(entryPoint) re-run on every caller update (see `closure-captures-self` at call sites). If that's unavoidable and this view is expensive, make it Equatable without the closure.")
             }
         }
         if case .named(let name, _) = type.unwrapped, stripModule(name) == "AnyView" {
-            finding("any-view", .info, "`\(property.name)` is an AnyView: SwiftUI loses the view's type and structural identity. Prefer a generic `Content: View` parameter.")
+            finding("any-view", .warning, "`\(property.name)` is an AnyView, which never compares equal (measured), so \(entryPoint) re-runs on every parent update. Prefer a generic `Content: View` parameter.")
         }
         return result
     }
@@ -185,11 +190,61 @@ public enum Analyzer {
 /// Patterns inside a view's members that cost work or identity on every `body` evaluation.
 private final class BodyScanner: SyntaxVisitor {
     let converter: SourceLocationConverter
+    let index: TypeIndex
+    let scope: [String]
+    let owner: String
+    /// The owner's properties and methods: referencing one inside a closure captures `self`.
+    let memberNames: Set<String>
+    let methodNames: Set<String>
     var findings: [Finding] = []
 
-    init(converter: SourceLocationConverter) {
+    init(converter: SourceLocationConverter, members: MemberBlockSyntax, index: TypeIndex, scope: [String], owner: String) {
         self.converter = converter
+        self.index = index
+        self.scope = scope
+        self.owner = owner
+        let decls = members.members.map(\.decl)
+        methodNames = Set(decls.compactMap { $0.as(FunctionDeclSyntax.self)?.name.text })
+        let properties = decls.compactMap { $0.as(VariableDeclSyntax.self) }
+            .filter { !$0.modifiers.contains { $0.name.text == "static" } }
+            .flatMap(\.bindings).compactMap { $0.pattern.as(IdentifierPatternSyntax.self)?.identifier.text }
+        // `let model = self.model` in `body` and then `{ model.select(1) }` captures the local copy, not `self`.
+        let locals = LocalNames()
+        for decl in decls {
+            if let function = decl.as(FunctionDeclSyntax.self), let body = function.body { locals.walk(body) }
+            if let variable = decl.as(VariableDeclSyntax.self) {
+                for binding in variable.bindings { if let accessors = binding.accessorBlock { locals.walk(accessors) } }
+            }
+        }
+        memberNames = methodNames.union(properties).subtracting(locals.names)
         super.init(viewMode: .sourceAccurate)
+    }
+
+    /// `Child(action: { flag.toggle() })`, `Child(action: noop)`, `Card { Text(title) }`: a closure argument that
+    /// captures the caller's `self` differs on every caller update, so the child re-runs every time (measured).
+    private func checkCapturedSelf(_ call: FunctionCallExprSyntax, child: String, line: Int) {
+        var arguments: [(label: String, expr: ExprSyntax)] = call.arguments.map { ($0.label?.text ?? "_", $0.expression) }
+        if let trailing = call.trailingClosure { arguments.append(("trailing closure", ExprSyntax(trailing))) }
+        arguments += call.additionalTrailingClosures.map { ($0.label.text, ExprSyntax($0.closure)) }
+
+        for (label, expr) in arguments {
+            let reason: String?
+            if let closure = expr.as(ClosureExprSyntax.self) {
+                reason = SelfCaptureScanner.capture(in: closure, memberNames: memberNames).map { "reads `\($0)`" }
+            } else if let reference = expr.as(DeclReferenceExprSyntax.self), methodNames.contains(reference.baseName.text) {
+                reason = "is the method `\(reference.baseName.text)` of this view"
+            } else if let member = expr.as(MemberAccessExprSyntax.self), member.base?.trimmedDescription == "self",
+                      methodNames.contains(member.declName.baseName.text) {
+                reason = "is the method `\(member.declName.baseName.text)` of this view"
+            } else {
+                reason = nil
+            }
+            guard let reason else { continue }
+            let argument = label == "trailing closure" ? "its trailing closure" : "`\(label):`"
+            findings.append(Finding(rule: "closure-captures-self", severity: .warning,
+                                    message: "The closure passed to `\(child)` as \(argument) \(reason), so it captures `self` and differs whenever `\(owner)`'s own state or inputs change: `\(child)` re-runs each time. Capture only what it needs, e.g. `{ [model] in model.select(item) }`, or move the action to a model object.",
+                                    line: line))
+        }
     }
 
     // Nested types are reported as views of their own.
@@ -201,6 +256,11 @@ private final class BodyScanner: SyntaxVisitor {
         let line = node.startLocation(converter: converter).line
         let callee = node.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text
 
+        // An Equatable child decides with its own `==`, which usually leaves closures out (measured).
+        if let callee, let qualified = index.resolve(callee, scope: scope), let child = index.types[qualified],
+           child.viewKind != nil, !child.isEquatable {
+            checkCapturedSelf(node, child: callee, line: line)
+        }
         if callee == "AnyView" {
             findings.append(Finding(rule: "any-view", severity: .info,
                                     message: "AnyView erases the view's type: SwiftUI can't diff it structurally. Prefer @ViewBuilder or `some View`.",
@@ -279,5 +339,74 @@ struct Suppressions {
     func ignores(_ rule: String, at line: Int) -> Bool {
         guard let rules = rulesByLine[line] else { return false }
         return rules.contains(rule) || rules.contains(Self.all)
+    }
+}
+
+/// Finds the first reference to the enclosing view's members (or `self`) inside a closure, ignoring names the
+/// closure binds itself (parameters, locals, capture list).
+private final class SelfCaptureScanner: SyntaxVisitor {
+    let memberNames: Set<String>
+    var shadowed: Set<String> = []
+    var found: String?
+
+    static func capture(in closure: ClosureExprSyntax, memberNames: Set<String>) -> String? {
+        let scanner = SelfCaptureScanner(memberNames: memberNames)
+        if let captures = closure.signature?.capture?.items {
+            for item in captures {
+                let text = item.trimmedDescription
+                    .replacingOccurrences(of: "weak ", with: "").replacingOccurrences(of: "unowned ", with: "")
+                let name = text.split(separator: "=").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? text
+                if name == "self" { return "self" }
+                scanner.shadowed.insert(name)
+            }
+        }
+        scanner.walk(closure.statements)
+        return scanner.found
+    }
+
+    private init(memberNames: Set<String>) {
+        self.memberNames = memberNames
+        super.init(viewMode: .sourceAccurate)
+    }
+
+    override func visit(_ node: ClosureShorthandParameterSyntax) -> SyntaxVisitorContinueKind {
+        shadowed.insert(node.name.text)
+        return .visitChildren
+    }
+
+    override func visit(_ node: ClosureParameterSyntax) -> SyntaxVisitorContinueKind {
+        shadowed.insert((node.secondName ?? node.firstName).text)
+        return .visitChildren
+    }
+
+    override func visit(_ node: IdentifierPatternSyntax) -> SyntaxVisitorContinueKind {
+        shadowed.insert(node.identifier.text)
+        return .visitChildren
+    }
+
+    override func visit(_ node: DeclReferenceExprSyntax) -> SyntaxVisitorContinueKind {
+        guard found == nil else { return .skipChildren }
+        // `item.title`: `title` is a member of `item`, not of the view.
+        if let member = node.parent?.as(MemberAccessExprSyntax.self), member.declName.id == node.id {
+            return .visitChildren
+        }
+        var name = node.baseName.text
+        if name.hasPrefix("$") || name.hasPrefix("_") { name.removeFirst() }
+        if name == "self" || (memberNames.contains(name) && !shadowed.contains(name)) {
+            found = name
+        }
+        return .visitChildren
+    }
+}
+
+/// Names bound by `let` / `var` inside function and accessor bodies.
+private final class LocalNames: SyntaxVisitor {
+    var names: Set<String> = []
+
+    init() { super.init(viewMode: .sourceAccurate) }
+
+    override func visit(_ node: IdentifierPatternSyntax) -> SyntaxVisitorContinueKind {
+        names.insert(node.identifier.text)
+        return .visitChildren
     }
 }

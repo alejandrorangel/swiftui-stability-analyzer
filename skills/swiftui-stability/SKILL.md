@@ -25,12 +25,16 @@ In Xcode, the same analysis runs as the **SwiftUIStabilityPlugin** build tool pl
 ```
 ProfileView  skippable: no  Sources/ProfileView.swift:22
   stable   user: User  — Equatable
-  unstable onTap: () -> Void  — closure: closures never compare equal
+  runtime  onTap: () -> Void  — closure: equal unless the caller's closure captures changing state (e.g. its `self`)
   owned    @State isExpanded: Bool  — owned by SwiftUI, not compared; writes re-run body
-  warning [closure-property] line 25: …
+  info [closure-property] line 25: …
+
+ProfileScreen  skippable: yes  Sources/ProfileScreen.swift:8
+  warning [closure-captures-self] line 14: The closure passed to `ProfileView` as `onTap:` reads `taps`, so it captures `self` …
 ```
 
-- `skippable`: `yes` (all compared inputs are stable), `depends` (a generic, unknown type, or custom `==`), `no` (an input never compares equal).
+- `skippable`: `yes` (all compared inputs are stable, or the type is `Equatable`), `depends` (a generic, a closure, or an unknown type), `no` (an input never compares equal, e.g. `AnyView`).
+- **Closures are decided at call sites.** SwiftUI compares a closure by what it captures (measured): capturing nothing, constants or a local copy is equal; reading the parent's state or calling its methods captures the parent's `self`, which changes on every parent update. `closure-captures-self` is reported on the parent's line.
 - Property stability: `stable` compares reliably · `runtime` depends on a generic argument · `unknown` can't be decided from these sources · `unstable` compares as changed on every parent update · `owned` is storage SwiftUI owns (`@State`, `@Environment`…), not compared but it invalidates the view directly.
 - The reason after `—` names the cause, including nested ones (`` `Row.onSelect`: closure ``).
 
@@ -38,7 +42,8 @@ ProfileView  skippable: no  Sources/ProfileView.swift:22
 
 | Rule | Fix |
 |---|---|
-| `closure-property` | Only if the view re-renders often or is expensive: make it `Equatable` comparing everything except the closure, and apply `.equatable()` where it's used. Or pass the action through the environment. Don't contort cheap views. |
+| `closure-captures-self` | Capture only what the closure needs: `{ [model] in model.select(item) }` (a local copy or capture list compares equal), or pass a method of a model object (`model.select`) instead of the view's own method. Only worth it for expensive children or frequently updating parents. Alternatively make the child `Equatable` without the closure (SwiftUI uses `==` automatically). |
+| `closure-property` (info) | Nothing to fix in the child by itself; see `closure-captures-self` at its call sites. |
 | `stored-view-builder` | Store the built view: `let content: Content` with `init(@ViewBuilder content: () -> Content) { self.content = content() }`. |
 | `observed-object-initialized` | `@ObservedObject var x = X()` → `@StateObject`, or `@State` with an `@Observable` class. This is a correctness bug: the object is recreated by the parent. |
 | `state-plain-class` | Mark the class `@Observable`, or hold value state instead. |
@@ -46,7 +51,7 @@ ProfileView  skippable: no  Sources/ProfileView.swift:22
 | `foreach-indices`, `foreach-id-self` | Iterate `Identifiable` elements or pass a stable `id:` key path. |
 | `frequent-updates` | The observed class has a display link, timer or sleep loop that writes observed state each tick, so `body` re-runs on every tick. Move the fast-changing value into a small child view that observes it (or an `@Observable` property read only there), so the rest of the body stays put. Confirm with `let _ = Self._printChanges()` in `body`. |
 | `observable-object` (info) | Consider migrating the ObservableObject to `@Observable` for per-property invalidation. |
-| `any-view` (info) | Use `@ViewBuilder`, `some View`, or a generic `Content: View`. |
+| `any-view` | A stored `AnyView` re-runs the view on every parent update (measured): use a generic `Content: View` or `@ViewBuilder`. |
 
 **Intended findings:** add `// swiftui-stability:ignore <rule> — <why>` in the comment block directly above the flagged declaration (any line of the block; the reason may wrap) or at the end of its line, instead of contorting the code. No blank line between the comment and the code. `// swiftui-stability:ignore stability` on a type's declaration silences its "can't skip" warning. Don't suppress without a reason in the comment.
 
@@ -55,4 +60,5 @@ Stability is a means, not a goal: prioritize views in lists, views under frequen
 ## Limits
 
 - Types from other modules (SPM packages, frameworks) are `unknown` unless they're common SDK value types.
-- SwiftUI's diffing is undocumented; the rules follow observed behavior (see the repository's PLAN.md).
+- SwiftUI's diffing is undocumented; the rules are measured on iOS 27 (simulator) in the repository's Validation/RESULTS.md. Older iOS versions aren't measured yet.
+- A local variable anywhere in the view's methods that shares a property's name hides that property from `closure-captures-self`.

@@ -21,9 +21,9 @@ private func baseline(_ source: String) -> Baseline {
 
 @Test func becomingUnstableIsARegression() {
     let before = baseline("struct V: View { let a: Int; var body: some View { EmptyView() } }")
-    let after = baseline("struct V: View { let a: () -> Int; var body: some View { EmptyView() } }")
+    let after = baseline("struct V: View { let a: AnyView; var body: some View { EmptyView() } }")
     let changes = before.changes(to: after)
-    #expect(changes.map(\.line) == ["~ V: skippable yes → skippable no", "~ V.a: Int stable → () -> Int unstable"])
+    #expect(changes.map(\.line) == ["~ V: skippable yes → skippable no", "~ V.a: Int stable → AnyView unstable"])
     #expect(changes.allSatisfy { $0.regression })
 }
 
@@ -40,7 +40,7 @@ private func baseline(_ source: String) -> Baseline {
 
 @Test func newUnskippableViewIsARegression() {
     let before = baseline("")
-    let after = baseline("struct V: View { let a: () -> Void; var body: some View { EmptyView() } }")
+    let after = baseline("struct V: View { let a: AnyView; var body: some View { EmptyView() } }")
     #expect(before.changes(to: after).map(\.regression) == [true])
 }
 
