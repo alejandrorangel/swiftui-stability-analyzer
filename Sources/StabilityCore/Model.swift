@@ -69,6 +69,7 @@ public struct Finding: Codable, Equatable, Sendable {
 public struct ViewReport: Codable, Sendable {
     /// Qualified name, e.g. `Profile.Header` for a nested view.
     public var name: String
+    public var kind: ViewKind
     public var file: String
     public var line: Int
     public var skippable: Skippability
@@ -76,6 +77,10 @@ public struct ViewReport: Codable, Sendable {
     public var customEquality: Bool
     public var properties: [PropertyReport]
     public var findings: [Finding]
+    /// Findings silenced with `// swiftui-stability:ignore <rule>`.
+    public var suppressed: [Finding]
+    /// `// swiftui-stability:ignore stability` on the declaration: no "can't skip" warning in Xcode.
+    public var stabilityWarningIgnored: Bool
 
     public var comparedProperties: [PropertyReport] { properties.filter(\.compared) }
 }

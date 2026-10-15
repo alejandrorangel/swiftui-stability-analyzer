@@ -24,8 +24,15 @@ public struct Baseline: Equatable, Sendable {
     static let header = "// SwiftUI stability baseline. Regenerate with `swiftui-stability dump`; checked by `swiftui-stability check`."
 
     public init(reports: [ViewReport]) {
-        views = Dictionary(reports.map { report in
-            (report.name, Entry(
+        // Same-named declarations (different `#if` branches) get `#2`, `#3`… in declaration order.
+        var seen: [String: Int] = [:]
+        let keyed = reports.map { report -> (String, ViewReport) in
+            seen[report.name, default: 0] += 1
+            let count = seen[report.name]!
+            return (count == 1 ? report.name : "\(report.name) #\(count)", report)
+        }
+        views = Dictionary(keyed.map { name, report in
+            (name, Entry(
                 skippable: report.skippable,
                 properties: Dictionary(report.comparedProperties.map { ($0.name, Property(type: $0.type, stability: $0.stability)) },
                                        uniquingKeysWith: { first, _ in first })

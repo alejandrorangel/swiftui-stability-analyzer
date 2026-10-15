@@ -1,3 +1,4 @@
+import Foundation
 import SwiftParser
 import SwiftSyntax
 
@@ -30,8 +31,16 @@ struct TypeDecl {
     /// Kept for views, whose bodies are scanned for findings.
     var members: MemberBlockSyntax?
     var converter: SourceLocationConverter?
+    /// For classes: a line that looks like a high-frequency update source (display link, timer, sleep loop).
+    var updateSource: (text: String, line: Int)?
 
-    var isView: Bool { conformances.contains("View") }
+    /// What SwiftUI compares before re-running this type's body, if anything.
+    var viewKind: ViewKind? {
+        if !conformances.isDisjoint(with: ViewKind.representableProtocols) { return .representable }
+        if conformances.contains("ViewModifier") { return .modifier }
+        if conformances.contains("View") { return .view }
+        return nil
+    }
     var isEquatable: Bool { !conformances.isDisjoint(with: ["Equatable", "Hashable", "Comparable"]) }
     var isObservable: Bool { attributes.contains("Observable") || attributes.contains("Model") }
 }
@@ -48,17 +57,24 @@ public struct SourceFile: Sendable {
 
 final class TypeIndex {
     private(set) var types: [String: TypeDecl] = [:]
+    /// Views, modifiers and representables, including same-named ones from different `#if` branches.
+    private(set) var views: [TypeDecl] = []
     /// Simple name → qualified names, for references written without their enclosing type.
     private var bySimpleName: [String: [String]] = [:]
 
     init(files: [SourceFile]) {
         var extensions: [(scope: [String], extended: String, conformances: Set<String>)] = []
+        var all: [TypeDecl] = []
         for file in files {
             let tree = Parser.parse(source: file.text)
             let converter = SourceLocationConverter(fileName: file.path, tree: tree)
             let collector = DeclarationCollector(file: file.path, converter: converter)
             collector.walk(tree)
-            for decl in collector.decls where types[decl.name] == nil {
+            for decl in collector.decls {
+                all.append(decl)
+                // `#if os(iOS) struct Probe: UIViewRepresentable #else struct Probe: View` declares a name twice;
+                // name resolution uses the first, but every declaration is analyzed.
+                guard types[decl.name] == nil else { continue }
                 types[decl.name] = decl
                 bySimpleName[String(decl.name.split(separator: ".").last!), default: []].append(decl.name)
             }
@@ -68,7 +84,12 @@ final class TypeIndex {
         for ext in extensions {
             guard let target = resolve(ext.extended, scope: ext.scope) else { continue }
             types[target]?.conformances.formUnion(ext.conformances)
+            for i in all.indices where all[i].name == target {
+                all[i].conformances.formUnion(ext.conformances)
+            }
         }
+        views = all.filter { $0.kind == .struct && $0.viewKind != nil }
+            .sorted { ($0.name, $0.file, $0.line) < ($1.name, $1.file, $1.line) }
     }
 
     /// Resolves a name as Swift would, innermost scope first: inside `Outer`, `Inner` is `Outer.Inner`.
@@ -84,8 +105,22 @@ final class TypeIndex {
         return bySimpleName[String(name.split(separator: ".").last!)]?.first
     }
 
-    var views: [TypeDecl] {
-        types.values.filter { $0.kind == .struct && $0.isView }.sorted { $0.name < $1.name }
+}
+
+public enum ViewKind: String, Codable, Sendable {
+    case view, modifier, representable
+
+    static let representableProtocols: Set<String> = [
+        "UIViewRepresentable", "UIViewControllerRepresentable", "NSViewRepresentable", "NSViewControllerRepresentable",
+    ]
+
+    /// What re-runs when an input compares as changed.
+    var entryPoint: String {
+        switch self {
+        case .view: "body"
+        case .modifier: "body(content:)"
+        case .representable: "update…(_:context:)"
+        }
     }
 }
 
@@ -129,19 +164,51 @@ private final class DeclarationCollector: SyntaxVisitor {
             line: line(node)
         )
         if let members {
-            decl.storedProperties = members.members.compactMap { $0.decl.as(VariableDeclSyntax.self) }
+            let items = flatten(members.members)
+            decl.storedProperties = items.compactMap { $0.decl.as(VariableDeclSyntax.self) }
                 .flatMap { storedProperties(of: $0) }
             if kind == .enum {
-                decl.enumPayloads = members.members.compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
+                decl.enumPayloads = items.compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
                     .flatMap(\.elements)
                     .flatMap { $0.parameterClause?.parameters.map { TypeRef($0.type) } ?? [] }
             }
-            if kind == .struct, decl.isView {
+            if kind == .struct {
                 decl.members = members
                 decl.converter = converter
             }
+            if kind == .class || kind == .actor {
+                decl.updateSource = updateSource(in: members)
+            }
         }
         decls.append(decl)
+    }
+
+    /// Members, including those inside `#if` blocks (every branch: the analyzer doesn't know the build settings).
+    private func flatten(_ items: MemberBlockItemListSyntax) -> [MemberBlockItemSyntax] {
+        items.flatMap { item -> [MemberBlockItemSyntax] in
+            guard let ifConfig = item.decl.as(IfConfigDeclSyntax.self) else { return [item] }
+            return ifConfig.clauses.flatMap { clause -> [MemberBlockItemSyntax] in
+                if case .decls(let nested) = clause.elements { return flatten(nested) }
+                return []
+            }
+        }
+    }
+
+    private let updateSourcePattern = try! Regex(
+        #"CADisplayLink|DispatchSourceTimer|Timer\.(publish|scheduledTimer)|Task\.sleep|\.sleep\(for:|\.sleep\(until:|displayLink"#
+    )
+
+    /// The first line of a class that looks like it drives frequent updates.
+    private func updateSource(in members: MemberBlockSyntax) -> (text: String, line: Int)? {
+        let firstLine = line(members)
+        for (offset, text) in members.trimmedDescription.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            let code = text.trimmingCharacters(in: .whitespaces)
+            if code.hasPrefix("//") { continue }
+            if let match = code.firstMatch(of: updateSourcePattern) {
+                return (String(code[match.range]), firstLine + offset)
+            }
+        }
+        return nil
     }
 
     private func conformances(_ clause: InheritanceClauseSyntax?) -> Set<String> {

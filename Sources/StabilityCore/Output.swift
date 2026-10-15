@@ -6,7 +6,8 @@ public enum TextReport {
         var lines: [String] = []
         for report in reports where !unstableOnly || report.skippable != .yes || !report.findings.isEmpty {
             let equality = report.customEquality ? "  (custom ==)" : ""
-            lines.append("\(report.name)  skippable: \(report.skippable.rawValue)\(equality)  \(report.file):\(report.line)")
+            let kind = report.kind == .view ? "" : "  (\(report.kind.rawValue))"
+            lines.append("\(report.name)\(kind)  skippable: \(report.skippable.rawValue)\(equality)  \(report.file):\(report.line)")
             for property in report.properties where !unstableOnly || property.stability != .stable {
                 let wrapper = property.wrapper.map { "@\($0) " } ?? ""
                 let status = property.compared ? property.stability.rawValue : "owned"
@@ -14,6 +15,9 @@ public enum TextReport {
             }
             for finding in report.findings {
                 lines.append("  \(finding.severity.rawValue) [\(finding.rule)] line \(finding.line): \(finding.message)")
+            }
+            if !report.suppressed.isEmpty {
+                lines.append("  (\(report.suppressed.count) suppressed: \(report.suppressed.map { "\($0.rule) line \($0.line)" }.joined(separator: ", ")))")
             }
             lines.append("")
         }
@@ -37,9 +41,9 @@ public enum XcodeDiagnostics {
         for report in reports {
             // Xcode only links a diagnostic to the editor when the path is absolute.
             let file = report.file.hasPrefix("/") ? report.file : "\(cwd)/\(report.file)"
-            if report.skippable == .no {
+            if report.skippable == .no, !report.stabilityWarningIgnored {
                 let unstable = report.comparedProperties.filter { $0.stability == .unstable }.map(\.name)
-                lines.append("\(file):\(report.line):1: warning: `\(report.name)` can't skip body; unstable inputs: \(unstable.joined(separator: ", ")) [stability]")
+                lines.append("\(file):\(report.line):1: warning: `\(report.name)` can't skip \(report.kind.entryPoint); unstable inputs: \(unstable.joined(separator: ", ")) [stability]")
             }
             for finding in report.findings where includeInfo || finding.severity == .warning {
                 let level = finding.severity == .warning ? "warning" : "note"

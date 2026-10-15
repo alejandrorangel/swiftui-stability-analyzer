@@ -7,7 +7,23 @@ public enum Analyzer {
     public static func analyze(_ files: [SourceFile]) -> [ViewReport] {
         let index = TypeIndex(files: files)
         let classifier = Classifier(index: index)
-        return index.views.map { analyze($0, index: index, classifier: classifier) }
+        let suppressions = Dictionary(files.map { ($0.path, Suppressions(source: $0.text)) }, uniquingKeysWith: { a, _ in a })
+        return index.views.map { view in
+            var report = analyze(view, index: index, classifier: classifier)
+            if let suppressions = suppressions[view.file] {
+                let (kept, suppressed) = report.findings.reduce(into: ([Finding](), [Finding]())) { result, finding in
+                    if suppressions.ignores(finding.rule, at: finding.line) {
+                        result.1.append(finding)
+                    } else {
+                        result.0.append(finding)
+                    }
+                }
+                report.findings = kept
+                report.suppressed = suppressed
+                report.stabilityWarningIgnored = suppressions.ignores("stability", at: view.line)
+            }
+            return report
+        }
     }
 
     private static func analyze(_ view: TypeDecl, index: TypeIndex, classifier: Classifier) -> ViewReport {
@@ -32,8 +48,9 @@ public enum Analyzer {
         findings.sort { ($0.line, $0.rule) < ($1.line, $1.rule) }
 
         return ViewReport(
-            name: view.name, file: view.file, line: view.line, skippable: skippable,
-            customEquality: view.isEquatable, properties: properties, findings: findings
+            name: view.name, kind: view.viewKind ?? .view, file: view.file, line: view.line, skippable: skippable,
+            customEquality: view.isEquatable, properties: properties, findings: findings,
+            suppressed: [], stabilityWarningIgnored: false
         )
     }
 
@@ -64,12 +81,24 @@ public enum Analyzer {
         func finding(_ rule: String, _ severity: Severity, _ message: String) {
             findings.append(Finding(rule: rule, severity: severity, message: message, line: property.line))
         }
+        /// ObservableObject invalidates the whole body on any `@Published` change; worse when that's every frame.
+        func observableObjectFindings() {
+            let referenced = referencedType()
+            if let referenced, let source = referenced.updateSource {
+                finding("frequent-updates", .warning,
+                        "`\(property.name)` (\(referenced.name)) looks like it publishes on a timer or display link (`\(source.text)` at line \(source.line)), and every @Published change re-runs all of \(entryPoint). Move the fast-changing value into a small child view that observes it, or into an @Observable property read only there. Confirm with `let _ = Self._printChanges()` in body.")
+            } else {
+                finding("observable-object", .info,
+                        "`\(property.name)` is an ObservableObject: any @Published change re-runs all of \(entryPoint). If it publishes often (playback, timers, scrolling, gestures), confirm with `let _ = Self._printChanges()` in body and move the fast-changing value into a child view or an @Observable property.")
+            }
+        }
         func referencedType() -> TypeDecl? {
             guard case .named(let name, _) = property.type?.unwrapped,
                   let qualified = index.resolve(name, scope: scope) else { return nil }
             return index.types[qualified]
         }
 
+        let entryPoint = "`\(view.name).\((view.viewKind ?? .view).entryPoint)`"
         var result = PropertyReport(
             name: property.name, type: property.typeText, wrapper: property.wrapper,
             stability: .stable, reason: "", compared: true, line: property.line
@@ -83,8 +112,12 @@ public enum Analyzer {
                 result.reason = "not compared; re-runs body only when properties it reads change"
             }
             if ["StateObject", "EnvironmentObject"].contains(wrapper) {
-                finding("observable-object", .info,
-                        "`\(property.name)` is an ObservableObject: any @Published change re-runs every observer's body. An @Observable class re-runs only the views that read the changed property.")
+                observableObjectFindings()
+            }
+            if ["State", "Environment"].contains(wrapper), let referenced, referenced.isObservable,
+               let source = referenced.updateSource {
+                finding("frequent-updates", .info,
+                        "`\(property.name)` (\(referenced.name)) looks like it updates on a timer or display link (`\(source.text)` at line \(source.line)). Only views that read the changing property re-run, but each of those re-runs per update: keep those reads in small child views.")
             }
             if wrapper == "State", let referenced, [.class, .actor].contains(referenced.kind), !referenced.isObservable {
                 finding("state-plain-class", .warning,
@@ -96,8 +129,7 @@ public enum Analyzer {
         switch property.wrapper {
         case "ObservedObject":
             result.reason = "compared by identity; any @Published change re-runs body"
-            finding("observable-object", .info,
-                    "`\(property.name)` is an ObservableObject: any @Published change re-runs every observer's body. An @Observable class re-runs only the views that read the changed property.")
+            observableObjectFindings()
             if property.hasInitializer {
                 finding("observed-object-initialized", .warning,
                         "`\(property.name)` is created inline with @ObservedObject, so a new instance replaces it whenever the parent re-renders. Use @StateObject (or @State with an @Observable class).")
@@ -132,7 +164,7 @@ public enum Analyzer {
                         "`\(property.name)` stores a view-building closure. Store the built view instead (`let \(property.name): \(name)`, built in `init(@ViewBuilder \(property.name): () -> \(name))`): a view value is compared, a closure never is.")
             } else if !view.isEquatable {
                 finding("closure-property", .warning,
-                        "`\(property.name)` is a closure, which never compares equal, so `\(view.name).body` re-runs whenever its parent's does. If that matters here, make the view Equatable without the closure and apply `.equatable()`.")
+                        "`\(property.name)` is a closure, which never compares equal, so \(entryPoint) re-runs whenever its parent's body does. If that matters here, make the type Equatable without the closure and apply `.equatable()`.")
             }
         }
         if case .named(let name, _) = type.unwrapped, stripModule(name) == "AnyView" {
@@ -196,5 +228,31 @@ private final class BodyScanner: SyntaxVisitor {
             }
         }
         return .visitChildren
+    }
+}
+
+/// `// swiftui-stability:ignore [rule, rule…]` silences findings on its own line and on the line after it.
+/// Without rules it silences all of them; `stability` silences the "can't skip" warning on a declaration.
+struct Suppressions {
+    private var rulesByLine: [Int: Set<String>] = [:]
+    private static let all = "*"
+
+    init(source: String) {
+        guard source.contains("swiftui-stability:ignore") else { return }
+        for (index, line) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            guard let comment = line.range(of: "//"),
+                  let directive = line[comment.upperBound...].range(of: "swiftui-stability:ignore") else { continue }
+            let rules = line[directive.upperBound...]
+                .split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+                .prefix { !$0.hasPrefix("-") && !$0.hasPrefix("—") }
+            let set = rules.isEmpty ? [Self.all] : Set(rules)
+            rulesByLine[index + 1, default: []].formUnion(set)
+            rulesByLine[index + 2, default: []].formUnion(set)
+        }
+    }
+
+    func ignores(_ rule: String, at line: Int) -> Bool {
+        guard let rules = rulesByLine[line] else { return false }
+        return rules.contains(rule) || rules.contains(Self.all)
     }
 }

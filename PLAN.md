@@ -60,7 +60,15 @@ All of them share `StabilityCore`, so there's one implementation of the rules.
 3. **Runtime**: `swiftui-stability trace` driving `xctrace record --template SwiftUI --launch` (or attach), `xctrace export` → per-view body counts (heatmap) → reality check: *Confirmed* (predicted unstable, re-runs often), *False alarm* (predicted unstable, rarely re-runs), *Silent waste* (predicted stable, re-runs often). The SwiftUI template exists in this Xcode (`xctrace list templates`); its export schema still needs a spike.
 4. **Agents**: ✅ skill (`skills/swiftui-stability/SKILL.md`, installed by `scripts/install.sh --skill`): when to run, before/after workflow, reading the output, a fix per rule. Next: a prebuilt release binary with a one-line installer (as ios-cli's `get.sh`); optionally an `ios stability` passthrough in ios-cli.
 
-## Known limits of v0.1
+## Field feedback (v0.3, 2026-10-15)
+
+First real-app run (a production app plus its SwiftUI package, 116 views):
+- `ViewModifier`s and representables weren't analyzed. They are compared the same way, so they now are (`kind` in the report).
+- A type declared in both branches of `#if canImport(UIKit) … #else` kept only the first declaration; all are reported now. Properties inside `#if` within a type's body were skipped; all branches are read now.
+- An intended `@State` reference holder (a plain class whose mutations must not re-render) had no way to be marked: added `// swiftui-stability:ignore <rule>`.
+- An `ObservableObject` publishing at ~60 fps re-ran a heavy body every frame and was reported only as `observable-object` (info), the same as a rarely-changing controller. Static analysis can't know publish frequency, but a display link, timer or sleep loop in the class is a strong hint: the new `frequent-updates` rule. Next: confirm with the runtime phase (body counts per view).
+
+## Known limits
 
 - Purely syntactic: types from other modules are `unknown` (Phase 1 config fixes the common ones). Protocol existentials are `unknown`.
 - Name resolution is by scope then simple name; two types with the same name in different modules can be confused.

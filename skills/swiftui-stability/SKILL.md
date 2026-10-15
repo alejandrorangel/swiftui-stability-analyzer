@@ -4,7 +4,7 @@ description: Checks which SwiftUI views can skip `body` when their parent re-ren
 ---
 # SwiftUI stability analyzer
 
-`swiftui-stability` statically analyzes SwiftUI views. Before re-running a child's `body`, SwiftUI compares the child's stored properties with their previous values. When every input compares equal, the body is skipped. This tool tells you, per view, whether that can happen and which inputs prevent it.
+`swiftui-stability` statically analyzes SwiftUI views, view modifiers (`body(content:)`) and UIKit/AppKit representables. Before re-running a child's `body`, SwiftUI compares the child's stored properties with their previous values. When every input compares equal, the body is skipped. This tool tells you, per view, whether that can happen and which inputs prevent it.
 
 ## Installation
 
@@ -44,8 +44,11 @@ ProfileView  skippable: no  Sources/ProfileView.swift:22
 | `state-plain-class` | Mark the class `@Observable`, or hold value state instead. |
 | `foreach-inline-transform` | Compute the filtered/sorted collection once (in the model, or cached state), not in `body`. |
 | `foreach-indices`, `foreach-id-self` | Iterate `Identifiable` elements or pass a stable `id:` key path. |
+| `frequent-updates` | The observed class has a display link, timer or sleep loop, so `body` re-runs on every tick. Move the fast-changing value into a small child view that observes it (or an `@Observable` property read only there), so the rest of the body stays put. Confirm with `let _ = Self._printChanges()` in `body`. |
 | `observable-object` (info) | Consider migrating the ObservableObject to `@Observable` for per-property invalidation. |
 | `any-view` (info) | Use `@ViewBuilder`, `some View`, or a generic `Content: View`. |
+
+**Intended findings:** add `// swiftui-stability:ignore <rule> — <why>` on the line before (or at the end of) the flagged line, instead of contorting the code. `// swiftui-stability:ignore stability` on a type's declaration silences its "can't skip" warning. Don't suppress without a reason in the comment.
 
 Stability is a means, not a goal: prioritize views in lists, views under frequently changing state, and expensive bodies. Skippability is a static prediction; confirm suspected hot spots at runtime with `let _ = Self._logChanges()` in `body` (unified log, subsystem `com.apple.SwiftUI`) or the SwiftUI template in Instruments.
 
