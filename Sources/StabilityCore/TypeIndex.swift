@@ -177,7 +177,11 @@ private final class DeclarationCollector: SyntaxVisitor {
                 decl.converter = converter
             }
             if kind == .class || kind == .actor {
-                decl.updateSource = updateSource(in: members)
+                // Observed state: @Published properties, or every stored property of an @Observable class.
+                let tracked = decl.storedProperties.filter {
+                    $0.wrapper == "Published" || (decl.isObservable && $0.wrapper != "ObservationIgnored")
+                }.map(\.name)
+                decl.updateSource = UpdateSourceFinder(members: items, tracked: Set(tracked), converter: converter).find()
             }
         }
         decls.append(decl)
@@ -192,23 +196,6 @@ private final class DeclarationCollector: SyntaxVisitor {
                 return []
             }
         }
-    }
-
-    private let updateSourcePattern = try! Regex(
-        #"CADisplayLink|DispatchSourceTimer|Timer\.(publish|scheduledTimer)|Task\.sleep|\.sleep\(for:|\.sleep\(until:|displayLink"#
-    )
-
-    /// The first line of a class that looks like it drives frequent updates.
-    private func updateSource(in members: MemberBlockSyntax) -> (text: String, line: Int)? {
-        let firstLine = line(members)
-        for (offset, text) in members.trimmedDescription.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let code = text.trimmingCharacters(in: .whitespaces)
-            if code.hasPrefix("//") { continue }
-            if let match = code.firstMatch(of: updateSourcePattern) {
-                return (String(code[match.range]), firstLine + offset)
-            }
-        }
-        return nil
     }
 
     private func conformances(_ clause: InheritanceClauseSyntax?) -> Set<String> {

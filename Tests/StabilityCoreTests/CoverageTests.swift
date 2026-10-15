@@ -110,6 +110,7 @@ private func analyze(_ sources: String...) -> [ViewReport] {
             @Published var position = 0.0
             private var link: CADisplayLink?
             func start() { link = CADisplayLink(target: self, selector: #selector(tick)) }
+            @objc private func tick() { position += 1 }
         }
         final class Settings: ObservableObject { @Published var tempo = 120 }
         """,
@@ -124,7 +125,7 @@ private func analyze(_ sources: String...) -> [ViewReport] {
     let findings = try #require(reports.first?.findings)
     #expect(findings.map(\.rule) == ["frequent-updates", "observable-object"])
     #expect(findings[0].severity == .warning)
-    #expect(findings[0].message.contains("`CADisplayLink` at line 3"))
+    #expect(findings[0].message.contains("`CADisplayLink` at line 4"))
 }
 
 @Test func observableModelWithASleepLoopIsInfo() throws {
@@ -155,4 +156,117 @@ private func analyze(_ sources: String...) -> [ViewReport] {
     }
     """)
     #expect(reports.first?.findings.map(\.rule) == ["observable-object"])
+}
+
+// frequent-updates fires only when a tick writes observed state.
+
+private func frequentUpdates(_ model: String) -> [Finding] {
+    let reports = analyze(model, """
+    struct Screen: View {
+        @StateObject private var model = Model()
+        var body: some View { EmptyView() }
+    }
+    """)
+    return reports.first?.findings.filter { $0.rule == "frequent-updates" } ?? []
+}
+
+@Test func loopThatPublishesThroughAMethodIsFlagged() {
+    #expect(frequentUpdates("""
+    final class Model: ObservableObject {
+        @Published var x = 0.0
+        func run() {
+            Task {
+                while !Task.isCancelled {
+                    update(at: 1)
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
+        }
+        private func update(at time: Double) { apply(time) }
+        private func apply(_ time: Double) { self.x = time }
+    }
+    """).count == 1)
+}
+
+@Test func watcherThatPublishesOnceIsNotFlagged() {
+    #expect(frequentUpdates("""
+    final class Model: ObservableObject {
+        @Published var finished = false
+        var position = 0.0
+        func watch(end: Double) {
+            Task {
+                while true {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    if position >= end {
+                        finished = true
+                        break
+                    }
+                    lastPolled = position
+                }
+            }
+        }
+        private var lastPolled = 0.0
+    }
+    """).isEmpty)
+}
+
+@Test func oneOffDelayIsNotATick() {
+    #expect(frequentUpdates("""
+    final class Model: ObservableObject {
+        @Published var toast: String?
+        func show(_ text: String) async {
+            toast = text
+            try? await Task.sleep(for: .seconds(2))
+            toast = nil
+        }
+    }
+    """).isEmpty)
+}
+
+@Test func timerSinkThatPublishesIsFlagged() {
+    #expect(frequentUpdates("""
+    final class Model: ObservableObject {
+        @Published var elapsed = 0
+        private var bag: Set<AnyCancellable> = []
+        func start() {
+            Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+                .sink { [weak self] _ in self?.elapsed += 1 }
+                .store(in: &bag)
+        }
+    }
+    """).first?.message.contains("`Timer.publish` at line 5") == true)
+}
+
+@Test func objectWillChangeSendCounts() {
+    #expect(frequentUpdates("""
+    final class Model: ObservableObject {
+        @Published var unused = 0
+        func run() async {
+            while true {
+                objectWillChange.send()
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+    """).count == 1)
+}
+
+@Test func observationIgnoredIsNotTracked() {
+    let reports = analyze("""
+    @Observable final class Model {
+        var title = ""
+        @ObservationIgnored var lastTick = 0.0
+        func run() async {
+            while true {
+                lastTick += 1
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+    struct Screen: View {
+        @State private var model = Model()
+        var body: some View { EmptyView() }
+    }
+    """)
+    #expect(reports.first?.findings.isEmpty == true)
 }

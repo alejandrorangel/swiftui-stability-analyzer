@@ -44,7 +44,7 @@ ProfileView  skippable: no  Sources/ProfileView.swift:22
 | `state-plain-class` | Mark the class `@Observable`, or hold value state instead. |
 | `foreach-inline-transform` | Compute the filtered/sorted collection once (in the model, or cached state), not in `body`. |
 | `foreach-indices`, `foreach-id-self` | Iterate `Identifiable` elements or pass a stable `id:` key path. |
-| `frequent-updates` | The observed class has a display link, timer or sleep loop, so `body` re-runs on every tick. Move the fast-changing value into a small child view that observes it (or an `@Observable` property read only there), so the rest of the body stays put. Confirm with `let _ = Self._printChanges()` in `body`. |
+| `frequent-updates` | The observed class has a display link, timer or sleep loop that writes observed state each tick, so `body` re-runs on every tick. Move the fast-changing value into a small child view that observes it (or an `@Observable` property read only there), so the rest of the body stays put. Confirm with `let _ = Self._printChanges()` in `body`. |
 | `observable-object` (info) | Consider migrating the ObservableObject to `@Observable` for per-property invalidation. |
 | `any-view` (info) | Use `@ViewBuilder`, `some View`, or a generic `Content: View`. |
 

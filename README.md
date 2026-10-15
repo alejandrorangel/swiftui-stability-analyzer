@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.3.0`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.3.1`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-property]`.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.3.0"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.3.1"),
 ],
 targets: [
     .target(
@@ -93,7 +93,7 @@ In Xcode, only `warning` findings and views that can't skip are reported; `info`
 | `stored-view-builder` | warning | `let content: () -> Content`; store `Content` instead |
 | `observed-object-initialized` | warning | `@ObservedObject var x = X()` is recreated by the parent |
 | `state-plain-class` | warning | `@State` holding a non-`@Observable` class |
-| `frequent-updates` | warning / info | An observed object whose class has a display link, timer or sleep loop: each update re-runs `body`. Warning for an ObservableObject (whole body), info for `@Observable` |
+| `frequent-updates` | warning / info | An observed object whose class has a display link, timer or sleep loop that writes observed state on each tick (directly or through its own methods; one-shot writes followed by `break`/`return` don't count). Each tick re-runs `body`. Warning for an ObservableObject (whole body), info for `@Observable` |
 | `foreach-inline-transform` | warning | `ForEach(items.filter …)` recomputed every body |
 | `foreach-indices` | warning | `ForEach(items.indices)` ties identity to position |
 | `foreach-id-self` | info | `id: \.self` identifies rows by value |
@@ -120,7 +120,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.3.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.3.1 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```
