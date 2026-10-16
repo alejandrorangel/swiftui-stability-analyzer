@@ -153,7 +153,8 @@ private func property(_ report: ViewReport?, _ name: String) -> PropertyReport? 
         var body: some View { EmptyView() }
     }
     """)
-    #expect(Set(views["V"]?.findings.map(\.rule) ?? []) == ["observable-object", "observed-object-initialized", "state-plain-class"])
+    // `cache` is never read in body, so holding it in @State is fine.
+    #expect(Set(views["V"]?.findings.map(\.rule) ?? []) == ["observable-object", "observed-object-initialized"])
 }
 
 @Test func bodyPatterns() {

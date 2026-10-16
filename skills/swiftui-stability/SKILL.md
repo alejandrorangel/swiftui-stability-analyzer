@@ -54,7 +54,8 @@ ProfileScreen  skippable: yes  Sources/ProfileScreen.swift:8
 | `closure-property` (info) | Nothing to fix in the child by itself; see `closure-captures-self` at its call sites. |
 | `stored-view-builder` | Store the built view: `let content: Content` with `init(@ViewBuilder content: () -> Content) { self.content = content() }`. |
 | `observed-object-initialized` | `@ObservedObject var x = X()` → `@StateObject`, or `@State` with an `@Observable` class. This is a correctness bug: the object is recreated by the parent. |
-| `state-plain-class` | Mark the class `@Observable`, or hold value state instead. |
+| `state-plain-class` | `body` reads a plain class held in `@State`: make it `@Observable`, or keep the value in `@State` itself. Not reported when the class is only used in event handlers or passed on, a deliberate pattern (e.g. a scroll-offset box written on every scroll tick without re-rendering). |
+| `state-observable-object` | `body` reads an ObservableObject held in `@State`, which doesn't subscribe: use `@StateObject` (created here, non-optional), or read it in a child with `@ObservedObject`. |
 | `foreach-inline-transform` | Compute the filtered/sorted collection once (in the model, or cached state), not in `body`. |
 | `foreach-indices`, `foreach-id-self` | Iterate `Identifiable` elements or pass a stable `id:` key path. |
 | `frequent-updates` | The observed class has a display link, timer or sleep loop that writes observed state each tick, so `body` re-runs on every tick. Move the fast-changing value into a small child view that observes it (or an `@Observable` property read only there), so the rest of the body stays put. Confirm with `let _ = Self._printChanges()` in `body`. |

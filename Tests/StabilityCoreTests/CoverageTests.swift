@@ -72,7 +72,7 @@ private func analyze(_ sources: String...) -> [ViewReport] {
         // swiftui-stability:ignore state-plain-class — a reference holder; mutations must not re-render
         @State private var holder = Holder()
         @State private var other = Holder()
-        var body: some View { EmptyView() }
+        var body: some View { Text("\\(holder.view == nil) \\(other.view == nil)") }
     }
     """).first)
     #expect(report.suppressed.map(\.line) == [4])
@@ -407,4 +407,82 @@ private func callSiteFindings(_ parentBody: String, child: String = """
     #expect(callSiteFindings("""
             ForEach(items, id: \\.self) { item in Row(title: "a", onTap: { print(item.description, item.items) }) }
     """).isEmpty)
+}
+
+// A class in @State is only a problem when body reads it (reported from real-app false positives).
+
+private func stateClassFindings(_ view: String) -> [Finding] {
+    analyze("""
+    final class OffsetBox { var offset = 0.0 }
+    final class ScrollController: ObservableObject { @Published var progress = 0.0 }
+    struct Header: View {
+        @ObservedObject var controller: ScrollController
+        var body: some View { Text("\\(controller.progress)") }
+    }
+    """, view).first { $0.name == "Screen" }?.findings.filter { $0.rule.hasPrefix("state-") } ?? []
+}
+
+@Test func plainClassUsedOnlyInHandlersIsFine() {
+    #expect(stateClassFindings("""
+    struct Screen: View {
+        @State private var box = OffsetBox()
+        var body: some View {
+            ScrollView { Text("a") }
+                .onScrollGeometryChange(for: Double.self) { $0.contentOffset.y } action: { _, new in box.offset = new }
+                .onTapGesture { print(box.offset) }
+        }
+    }
+    """).isEmpty)
+}
+
+@Test func observableObjectPassedToChildrenIsFine() {
+    #expect(stateClassFindings("""
+    struct Screen: View {
+        @State private var controller = ScrollController()
+        @State private var optional: ScrollController?
+        var body: some View {
+            VStack {
+                Header(controller: controller)
+                if let optional { Header(controller: optional) }
+                Button("Reset") { controller.progress = 0 }
+            }
+        }
+    }
+    """).isEmpty)
+}
+
+@Test func plainClassReadInBodyIsFlagged() throws {
+    let findings = stateClassFindings("""
+    struct Screen: View {
+        @State private var box = OffsetBox()
+        var body: some View { Text("\\(box.offset)") }
+    }
+    """)
+    let finding = try #require(findings.first)
+    #expect(finding.rule == "state-plain-class")
+    #expect(finding.message.contains("`box.offset`"))
+}
+
+@Test func observableObjectReadInBodyIsFlagged() throws {
+    let findings = stateClassFindings("""
+    struct Screen: View {
+        @State private var controller = ScrollController()
+        var body: some View {
+            VStack { Text("\\(self.controller.progress)") }
+        }
+    }
+    """)
+    #expect(findings.map(\.rule) == ["state-observable-object"])
+    #expect(findings.first?.message.contains("@StateObject") == true)
+}
+
+@Test func readsInViewBuilderClosuresCount() {
+    #expect(stateClassFindings("""
+    struct Screen: View {
+        @State private var box = OffsetBox()
+        var body: some View {
+            Button { print("tap") } label: { Text("\\(box.offset)") }
+        }
+    }
+    """).map(\.rule) == ["state-plain-class"])
 }

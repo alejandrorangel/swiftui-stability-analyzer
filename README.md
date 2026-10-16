@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.7.2`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.8.0`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-captures-self]`. The build log (Report navigator → the build → "SwiftUI stability: <target>") has a summary: totals, the views that can't skip with their unstable inputs, warnings by rule, and the path of the full JSON report.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.7.2"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.8.0"),
 ],
 targets: [
     .target(
@@ -124,7 +124,8 @@ In Xcode, only `warning` findings and views that can't skip are reported (Xcode 
 | `any-view` | warning / info | A stored `AnyView` never compares equal (measured), so the view re-runs on every parent update (warning); `AnyView(…)` in a body (info) |
 | `closure-property` | info | A stored closure: stable only if callers pass closures that don't capture their `self` |
 | `observed-object-initialized` | warning | `@ObservedObject var x = X()` is recreated by the parent |
-| `state-plain-class` | warning | `@State` holding a non-`@Observable` class |
+| `state-plain-class` | warning | `@State` holds a plain class and `body` reads it (`box.offset`): changing it won't re-run `body`. Holding one only for event handlers or to pass on is fine |
+| `state-observable-object` | warning | `@State` holds an ObservableObject and `body` reads it: `@State` doesn't subscribe. Use `@StateObject`, or read it in a child with `@ObservedObject`. Passing it to children is fine |
 | `frequent-updates` | warning / info | An observed object whose class has a display link, timer or sleep loop that writes observed state on each tick (directly or through its own methods; one-shot writes followed by `break`/`return` don't count). Each tick re-runs `body`. Warning for an ObservableObject (whole body), info for `@Observable` |
 | `foreach-inline-transform` | warning | `ForEach(items.filter …)` recomputed every body |
 | `foreach-indices` | warning | `ForEach(items.indices)` ties identity to position |
@@ -178,12 +179,23 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.7.2 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.8.0 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```
 
 To accept an intended change, run `dump` again and commit the updated baseline together with the code.
+
+### Xcode Cloud and other CI building with the plugin
+
+Build tool plugins need to be trusted once (Xcode's Trust & Enable). `xcodebuild` takes `-skipPackagePluginValidation`; on Xcode Cloud, which runs its own `xcodebuild`, the usual approach is a `ci_scripts/ci_post_clone.sh` that sets Xcode's (misspelled) default:
+
+```sh
+#!/bin/sh
+defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
+```
+
+If you'd rather not add the plugin to a CI-built project, run `swiftui-stability check` as a CI step instead (above): it needs no project change.
 
 ## Develop
 

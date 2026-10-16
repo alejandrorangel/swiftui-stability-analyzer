@@ -29,8 +29,9 @@ public enum Analyzer {
     private static func analyze(_ view: TypeDecl, index: TypeIndex, classifier: Classifier) -> ViewReport {
         let scope = view.name.split(separator: ".").map(String.init)
         var findings: [Finding] = []
+        let bodyReads = view.members.flatMap { members in view.converter.map { BodyReads.find(in: members, converter: $0) } } ?? [:]
         let properties = view.storedProperties.map { property in
-            report(property, view: view, scope: scope, index: index, classifier: classifier, findings: &findings)
+            report(property, view: view, scope: scope, index: index, classifier: classifier, bodyReads: bodyReads, findings: &findings)
         }
 
         let worst = properties.filter(\.compared).map(\.stability).max() ?? .stable
@@ -81,7 +82,7 @@ public enum Analyzer {
 
     private static func report(
         _ property: StoredProperty, view: TypeDecl, scope: [String], index: TypeIndex,
-        classifier: Classifier, findings: inout [Finding]
+        classifier: Classifier, bodyReads: [String: BodyReads.Read], findings: inout [Finding]
     ) -> PropertyReport {
         func finding(_ rule: String, _ severity: Severity, _ message: String) {
             findings.append(Finding(rule: rule, severity: severity, message: message, line: property.line))
@@ -124,9 +125,17 @@ public enum Analyzer {
                 finding("frequent-updates", .info,
                         "`\(property.name)` (\(referenced.name)) looks like it updates on a timer or display link (`\(source.text)` at line \(source.line)). Only views that read the changing property re-run, but each of those re-runs per update: keep those reads in small child views.")
             }
-            if wrapper == "State", let referenced, [.class, .actor].contains(referenced.kind), !referenced.isObservable {
-                finding("state-plain-class", .warning,
-                        "`\(property.name)` holds the class `\(referenced.name)` in @State, but it isn't @Observable: SwiftUI won't see its mutations.")
+            // A class in @State only goes wrong when body reads it: SwiftUI doesn't re-run body when it changes.
+            // Holding one to pass to children, or for event handlers only, is a deliberate pattern.
+            if wrapper == "State", let referenced, [.class, .actor].contains(referenced.kind), !referenced.isObservable,
+               let read = bodyReads[property.name] {
+                if referenced.conformances.contains("ObservableObject") {
+                    finding("state-observable-object", .warning,
+                            "`\(property.name)` is an ObservableObject held in @State, and body reads `\(read.text)` (line \(read.line)), but @State doesn't subscribe to it: this view won't update when it publishes. Use @StateObject if it's created here, or read it in a child that observes it with @ObservedObject.")
+                } else {
+                    finding("state-plain-class", .warning,
+                            "Body reads `\(read.text)` (line \(read.line)), but `\(referenced.name)` isn't observable, so changing it won't re-run body. Make it @Observable, or keep the value in @State itself.")
+                }
             }
             return result
         }
@@ -408,5 +417,81 @@ private final class LocalNames: SyntaxVisitor {
     override func visit(_ node: IdentifierPatternSyntax) -> SyntaxVisitorContinueKind {
         names.insert(node.identifier.text)
         return .visitChildren
+    }
+}
+
+/// Properties of the view's members read while `body` is computed (`box.offset`, `self.store.items`), by member
+/// name, first read only. Reads inside event handlers (`on…` modifiers, `Button` actions, `task`, `Task {}`,
+/// `action:` / `perform:` arguments) run later, so they don't count; passing the member itself (`Child(store:
+/// store)`) isn't a read.
+struct BodyReads {
+    struct Read {
+        var text: String
+        var line: Int
+    }
+
+    static func find(in members: MemberBlockSyntax, converter: SourceLocationConverter) -> [String: Read] {
+        let scanner = Scanner(converter: converter)
+        scanner.walk(members)
+        return scanner.reads
+    }
+
+    private final class Scanner: SyntaxVisitor {
+        let converter: SourceLocationConverter
+        var reads: [String: Read] = [:]
+
+        init(converter: SourceLocationConverter) {
+            self.converter = converter
+            super.init(viewMode: .sourceAccurate)
+        }
+
+        // Nested types are separate views.
+        override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+        override func visit(_ node: ClassDeclSyntax) -> SyntaxVisitorContinueKind { .skipChildren }
+
+        override func visit(_ node: ClosureExprSyntax) -> SyntaxVisitorContinueKind {
+            Self.isEventHandler(node) ? .skipChildren : .visitChildren
+        }
+
+        override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
+            guard let base = node.base else { return .visitChildren }
+            var name: String?
+            if let reference = base.as(DeclReferenceExprSyntax.self), reference.baseName.text != "self" {
+                name = reference.baseName.text
+            } else if let inner = base.as(MemberAccessExprSyntax.self), inner.base?.trimmedDescription == "self" {
+                name = inner.declName.baseName.text
+            }
+            if let name, reads[name] == nil {
+                reads[name] = Read(text: node.trimmedDescription, line: node.startLocation(converter: converter).line)
+            }
+            return .visitChildren
+        }
+
+        static let handlerLabels: Set<String> = ["action", "perform", "onCommit", "onEditingChanged", "completion"]
+
+        /// `.onTapGesture { }`, `.onChange(of:) { }`, `.task { }`, `Button { action } label: { }`, `Task { }`,
+        /// `DragGesture().onChanged { }`, `Button(action: { })`.
+        static func isEventHandler(_ closure: ClosureExprSyntax) -> Bool {
+            if let argument = closure.parent?.as(LabeledExprSyntax.self), let label = argument.label?.text {
+                return handlerLabels.contains(label) || label.hasPrefix("on")
+            }
+            let call: FunctionCallExprSyntax?
+            if let direct = closure.parent?.as(FunctionCallExprSyntax.self) {
+                call = direct
+            } else if let labeled = closure.parent?.as(MultipleTrailingClosureElementSyntax.self) {
+                // `label:` / `content:` trailing closures build views; `action:` doesn't.
+                if handlerLabels.contains(labeled.label.text) { return true }
+                return false
+            } else {
+                call = nil
+            }
+            guard let call else { return false }
+            let name = call.calledExpression.as(MemberAccessExprSyntax.self)?.declName.baseName.text
+                ?? call.calledExpression.as(DeclReferenceExprSyntax.self)?.baseName.text ?? ""
+            if name.hasPrefix("on") || name == "task" || name == "Task" || name == "withAnimation" { return true }
+            // `Button("Title") { action }` and `Button { action } label: { … }`: the first trailing closure acts.
+            if name == "Button", call.trailingClosure?.id == closure.id { return true }
+            return false
+        }
     }
 }
