@@ -12,7 +12,7 @@ There are two ways to use the tool:
 
 ### 1. Xcode app project (build tool plugin)
 
-1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.7.1`, and click **Add Package**.
+1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.7.2`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
 4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-captures-self]`. The build log (Report navigator → the build → "SwiftUI stability: <target>") has a summary: totals, the views that can't skip with their unstable inputs, warnings by rule, and the path of the full JSON report.
@@ -25,7 +25,7 @@ To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.7.1"),
+    .package(url: "https://github.com/alejandrorangel/swiftui-stability-analyzer", from: "0.7.2"),
 ],
 targets: [
     .target(
@@ -60,13 +60,12 @@ Then turn it on in **System Settings → General → Login Items & Extensions �
 
 | Command | What it does |
 |---|---|
-| Toggle Stability Annotations | Inline indicators like Compose's: `// ✅ skippable (3/3 stable)` / `⚠️ depends` / `❌ can't skip: content` on each view, `// 🟢 stable — …` / `🟡 runtime` / `🔴 unstable` / `⚪ owned` on each input. Run again to remove them all. Uses the build plugin's last whole-module report when it has the view, so types from other files resolve |
 | Capture What the Closure Needs | Fixes `closure-captures-self`: `{ model.select(item) }` → `{ [model] in model.select(item) }`. Explains instead when the closure writes the view's state or calls its methods |
 | Make Equatable Without Closures | Adds `Equatable` and a `nonisolated static func ==` comparing every input except closures and SwiftUI-owned state (`===` for objects) |
 | Toggle Self._printChanges() | Adds or removes `let _ = Self._printChanges()` at the top of the view's `body` (or a modifier's `body(content:)`) |
 | Ignore Finding on This Line | Inserts `// swiftui-stability:ignore <rule> — ` above the line, for the reason |
 
-Xcode gives an extension only the current file. Annotations fill that gap with the build plugin's latest report (read-only access to DerivedData); the other commands analyze the current file, so types declared elsewhere show as unknown there. Xcode has no API for gutter icons or inline badges, and drops plugin notes, so indicators are comments: toggle them off before committing.
+Xcode gives an extension only the current file, so the commands analyze that file alone; types declared elsewhere show as unknown there. For whole-module results use the build plugin: warnings in the Issue navigator and a summary in the build log.
 
 Not showing up in the Editor menu? Check that it's enabled under **Xcode Source Editor** (in the By App view it's listed under SwiftUI Stability, not Xcode), that Xcode was restarted, and Console (filter "IDEExtension") for a signing error.
 
@@ -179,7 +178,7 @@ Commit a baseline (`swiftui-stability dump MyApp/` → `stability/baseline.stabi
 ```yaml
 - name: SwiftUI stability
   run: |
-    git clone --depth 1 --branch 0.7.1 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
+    git clone --depth 1 --branch 0.7.2 https://github.com/alejandrorangel/swiftui-stability-analyzer /tmp/ssa
     swift build -c release --package-path /tmp/ssa --product swiftui-stability
     /tmp/ssa/.build/release/swiftui-stability check MyApp/ --ignore-non-regressive
 ```

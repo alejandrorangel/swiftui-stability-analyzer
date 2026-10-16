@@ -10,7 +10,6 @@ final class StabilityCommand: NSObject, XCSourceEditorCommand {
         case equatable = "dev.stability.make-equatable"
         case printChanges = "dev.stability.toggle-print-changes"
         case ignore = "dev.stability.ignore-finding"
-        case annotate = "dev.stability.toggle-annotations"
 
         var title: String {
             switch self {
@@ -18,7 +17,6 @@ final class StabilityCommand: NSObject, XCSourceEditorCommand {
             case .equatable: "Make Equatable Without Closures"
             case .printChanges: "Toggle Self._printChanges()"
             case .ignore: "Ignore Finding on This Line"
-            case .annotate: "Toggle Stability Annotations"
             }
         }
 
@@ -28,7 +26,6 @@ final class StabilityCommand: NSObject, XCSourceEditorCommand {
             case .equatable: try Fixes.makeEquatable(in: source, line: line)
             case .printChanges: try Fixes.togglePrintChanges(in: source, line: line)
             case .ignore: try Fixes.ignoreFinding(in: source, line: line)
-            case .annotate: try Fixes.toggleStabilityAnnotations(in: source, moduleReports: PluginReports.latest())
             }
         }
     }
