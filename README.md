@@ -15,11 +15,13 @@ There are two ways to use the tool:
 1. In Xcode: **File → Add Package Dependencies…**, paste `https://github.com/alejandrorangel/swiftui-stability-analyzer`, choose **Up to Next Major Version** from `0.8.0`, and click **Add Package**.
 2. In **Choose Package Products**, set **Add to Target** to **None** for `swiftui-stability` and `StabilityCore`. Nothing gets linked into your app. Set `SwiftUIStabilityPlugin` to your app target, or to **None** and add it in step 3.
 3. Select your app target → **Build Phases** → **Run Build Tool Plug-ins** → **+** → `SwiftUIStabilityPlugin`. If you picked the target in step 2, it's already there. Repeat for each target (app, frameworks) that contains SwiftUI views.
-4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin. Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-captures-self]`. The build log (Report navigator → the build → "SwiftUI stability: <target>") has a summary: totals, the views that can't skip with their unstable inputs, warnings by rule, and the path of the full JSON report.
+4. Build (⌘B). Xcode asks you once to **Trust & Enable** the plugin: until you do, the build stops with "Plugin SwiftUIStabilityPlugin … must be enabled before it can be used" in the Issue navigator; click **Trust & Enable** on that error and build again (command-line `xcodebuild -skipPackagePluginValidation` builds skip this step, so they can work while Xcode's don't). Warnings appear inline and in the Issue navigator, ending in `[stability]` or a rule name such as `[closure-captures-self]`. The build log (Report navigator → the build → "SwiftUI stability: <target>") has a summary: totals, the views that can't skip with their unstable inputs, warnings by rule, and the path of the full JSON report.
 
 The first build compiles the analyzer and swift-syntax for your Mac: about 12 s for a Debug build and about 2 minutes for a Release build or Archive (measured on an Apple silicon Mac); later builds reuse it. After that the analyzer runs on every build: parsing only, nothing is compiled into your app. `xcodebuild` on CI needs `-skipPackagePluginValidation`, the command-line version of Trust & Enable.
 
 To remove it, delete the plugin from **Run Build Tool Plug-ins** and the package from the project's **Package Dependencies**.
+
+Unrelated to the plugin but easy to mix up with it: opening an older project in a newer Xcode can offer "Update to recommended settings", which changes things like the deployment target and `LastUpgradeCheck`. Review that diff separately before committing the plugin change.
 
 ### 2. Swift package target
 
